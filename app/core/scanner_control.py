@@ -1,51 +1,47 @@
+# app/core/scanner_control.py
 """
 Refactor of the old `pathosonicscannercontrol.py`.
 
-Key changes:
-- Uses the centralized Config and the singleton Serial Manager.
-- Maintains public API compatibility for functions used by your app:
+Key points:
+- Uses centralized Config + the shared serial connection from app.core.serial_manager.
+- Public API kept:
     - deltaMove(delta, axis)
     - rotate_nozzle_clockwise(step=value)
     - rotate_nozzle_counterclockwise(step=value)
     - go2INIT()
     - go2StartScan()
     - ScanPath()
-    - get_position()               # returns list[str], used as get_position()[0] elsewhere
-    - get_position_axis(axis)      # helper
+    - get_position()                # returns list[str]
+    - get_position_axis(axis)
+- Manual jogs use Config.JOG_FEED_MM_PER_MIN (fast), scan path uses Config.SCAN_SPEED_MM_PER_MIN (unchanged).
+- E-axis absolute position is persisted to disk to stay in sync across processes.
 
-- Adds safer bounds checking, absolute/relative mode handling, and persists E-axis position on disk
-  so multiple processes (Flask + record.py) share the same rotation reference.
-
-Notes:
-- The old "connectprinter()/getresponse()/waitresponses()/returnresponses()" were internal utilities in the
-  original script. They are provided here as thin compatibility wrappers but the new code does not need them.
+Compatibility helpers (no-op / thin shims):
+    - connectprinter()
+    - getresponse(serialconn)
+    - waitresponses(serialconn, mytext)
+    - returnresponses(serialconn, mytext)
 """
 
 from __future__ import annotations
-from dataclasses import dataclass
 from pathlib import Path
 from typing import Optional, List, Tuple
-
 import time
-import serial
-import serial.tools.list_ports
 
 from app.config import Config
 from app.core.serial_manager import (
-    start_serial,
     connect_serial,
     send_gcode,
     send_now,
     wait_for_motion_complete,
     get_position as _sm_get_position,
     get_position_axis as _sm_get_position_axis,
+    connected_event,   # function returning the Event
 )
 
-# Start serial services on import so routes can call movement immediately.
-start_serial()
-
-# ---------------- Persistence for E-axis (rotation) ----------------
-
+# --------------------------------------------------------------------------------------
+# E-axis (rotation) persistence (absolute position in "degrees"/steps you define on E)
+# --------------------------------------------------------------------------------------
 _E_AXIS_POS_FILE: Path = (Config.DATA_DIR / "e_axis_position.txt").resolve()
 
 def _read_e_axis_position(default: float = 0.0) -> float:
@@ -58,58 +54,50 @@ def _read_e_axis_position(default: float = 0.0) -> float:
 
 def _write_e_axis_position(value: float) -> None:
     try:
+        _E_AXIS_POS_FILE.parent.mkdir(parents=True, exist_ok=True)
         _E_AXIS_POS_FILE.write_text(f"{value:.6f}")
     except Exception as e:
         print(f"[E-axis] Warning: failed to persist position: {e}")
 
-# Initialize if missing
+# Ensure file exists
 if not _E_AXIS_POS_FILE.exists():
     _write_e_axis_position(0.0)
 
+# --------------------------------------------------------------------------------------
+# Connection/Mode helpers
+# --------------------------------------------------------------------------------------
+def _ensure_connected() -> bool:
+    """Make sure we have a serial connection; try once if not."""
+    if connected_event().is_set():
+        return True
+    return connect_serial() is not None
 
-# ---------------- Basic helpers ----------------
-
-def _ensure_units_and_modes() -> None:
-    """
-    Ensure printer is in mm and absolute positioning for predictable moves.
-    Safe to call repeatedly.
-    """
+def _ensure_units_and_absolute() -> None:
+    """Put controller in mm + absolute positioning (safe to call repeatedly)."""
     send_now("G21")  # millimeters
     send_now("G90")  # absolute
 
-def feedrate(Feedrate: float) -> bool:
-    """
-    Set motion feedrate (mm/min), like the old `feedrate(serialconn, Feedrate)`.
-    Returns True on 'ok' detection, else False.
-    """
-    resp = send_gcode(f"G0 F{float(Feedrate)}")
-    ok = any("ok" in (line.lower()) for line in resp)
-    return ok
+def feedrate(feed_mm_per_min: float) -> bool:
+    """Set motion feedrate; returns True if we saw 'ok' in the response."""
+    resp = send_gcode(f"G0 F{float(feed_mm_per_min)}")
+    return any("ok" in (ln.lower()) for ln in resp)
 
 def home(axis: str) -> bool:
-    """
-    Home a specific axis ('X','Y','Z').
-    """
     axis = axis.upper()
     if axis not in ("X", "Y", "Z"):
-        print("Invalid axis ID:", axis)
+        print(f"[home] Invalid axis: {axis}")
         return False
-    _ensure_units_and_modes()
+    _ensure_units_and_absolute()
     resp = send_gcode(f"G28 {axis}")
-    ok = any("ok" in (line.lower()) for line in resp)
-    return ok
+    return any("ok" in (ln.lower()) for ln in resp)
 
-def move(axis: str, position: float) -> bool:
-    """
-    Absolute move to given position on axis (X/Y/Z/E).
-    Mirrors old signature but does not require passing a serial object.
-    """
+def move_absolute(axis: str, position: float) -> bool:
+    """Absolute move on an axis with clamping for XYZ; E is unclamped."""
     axis = axis.upper()
     if axis not in ("X", "Y", "Z", "E"):
-        print("Invalid axis ID:", axis)
+        print(f"[move_absolute] Invalid axis: {axis}")
         return False
 
-    # Clamp positions for safety (for E we don't clamp)
     pos = float(position)
     if axis == "X":
         pos = max(0.0, min(Config.X_MAX, pos))
@@ -118,231 +106,135 @@ def move(axis: str, position: float) -> bool:
     elif axis == "Z":
         pos = max(0.0, min(Config.Z_MAX, pos))
 
-    _ensure_units_and_modes()
+    _ensure_units_and_absolute()
     resp = send_gcode(f"G0 {axis}{pos:.3f}")
-    ok = any("ok" in (line.lower()) for line in resp)
-    return ok
+    return any("ok" in (ln.lower()) for ln in resp)
 
+# --------------------------------------------------------------------------------------
+# Public API (used by your Flask routes)
+# --------------------------------------------------------------------------------------
 def get_position() -> List[str]:
-    """
-    Match old behavior: returns raw response lines (list[str]).
-    In your code, you use get_position()[0].
-    """
+    """Raw M114 response lines (list[str])."""
     return _sm_get_position()
 
 def get_position_axis(axis: str) -> Optional[float]:
-    """
-    Return current numeric coordinate for axis (X/Y/Z/E) or None if unavailable.
-    """
+    """Parsed X/Y/Z/E from M114."""
     return _sm_get_position_axis(axis)
 
-
-# ---------------- Compatibility wrappers (not used by new code) ----------------
-
-def connectprinter() -> Optional[serial.Serial]:
+def deltaMove(delta: float, axis: str) -> bool:
     """
-    Compatibility: return the underlying serial instance (or None).
+    Manual jog by delta on axis (X/Y/Z) at FAST manual feed (Config.JOG_FEED_MM_PER_MIN).
+    Uses relative move to avoid race with position polling.
     """
-    return connect_serial(baudrate=Config.SERIAL_BAUD, timeout=Config.SERIAL_TIMEOUT_S)
+    if not _ensure_connected():
+        raise RuntimeError("Serial not connected")
 
-def getresponse(serialconn) -> bytes:
-    """
-    Old helper: read one line (blocking until available).
-    Here we just request M114 and return the first line bytes-like for compatibility.
-    """
-    lines = _sm_get_position()
-    first = (lines[0] if lines else "").encode("utf-8", errors="ignore")
-    return first
-
-def waitresponses(serialconn, mytext: str) -> bool:
-    """
-    Old helper: loop-read until 'ok'. We emulate by issuing an M400 and waiting for ok.
-    """
-    return wait_for_motion_complete(timeout=10.0)
-
-def returnresponses(serialconn, mytext: str) -> List[str]:
-    """
-    Old helper: collect lines until 'ok'. We emulate by a single M114 grab.
-    """
-    return _sm_get_position()
-
-
-# ---------------- Temperature (kept from original) ----------------
-
-def gettemperature() -> Tuple[Optional[float], Optional[float]]:
-    """
-    Parse temperatures from M105 output (if firmware reports them).
-    Returns (T1, T2) or (None, None).
-    """
-    resp = send_gcode("M105")
-    joined = " ".join(resp)
-    try:
-        parts = joined.replace("==", ":").replace("T0:", "T:").split()
-        # Look for patterns like "T:xxx" and "B:xxx" (hotend/bed) – firmware dependent.
-        T1 = None
-        T2 = None
-        for tok in parts:
-            if tok.startswith("T:"):
-                T1 = float(tok.split(":")[1].split("/")[0])
-            if tok.startswith("B:"):
-                T2 = float(tok.split(":")[1].split("/")[0])
-        return T1, T2
-    except Exception:
-        return None, None
-
-
-# ---------------- High-level motions (public API your app uses) ----------------
-from app.config import Config
-
-
-def deltaMove(delta, axis):
-    """Move [delta] mm on [axis] with fast jog feedrate."""
-    if axis not in ["X", "Y", "Z"]:
-        print("Invalid axis ID:", axis)
+    axis = axis.upper()
+    if axis not in ("X", "Y", "Z"):
+        print(f"[deltaMove] Invalid axis: {axis}")
         return False
 
-    ser = connectprinter()
-    try:
-        # 1) Use fast jog feedrate
-        feedrate(ser, int(Config.JOG_FEED_MM_PER_MIN))
+    # Clamp target based on current position to keep within bounds.
+    current = get_position_axis(axis)
+    if current is None:
+        print(f"[deltaMove] Couldn't read current {axis} position.")
+        return False
 
-        # 2) Read current pos and clamp target
-        pos = getposition_axis(ser, axis)
-        print("Current Position:", pos)
-        newposition = float(pos) + float(delta)
+    target = current + float(delta)
+    if axis == "X":
+        target = max(0.0, min(Config.X_MAX, target))
+        delta = target - current
+    elif axis == "Y":
+        target = max(0.0, min(Config.Y_MAX, target))
+        delta = target - current
+    elif axis == "Z":
+        target = max(0.0, min(Config.Z_MAX, target))
+        delta = target - current
 
-        if axis in ["X", "Y"]:
-            lim = Config.X_MAX if axis == "X" else Config.Y_MAX
-            newposition = max(0.0, min(lim, newposition))
-        elif axis == "Z":
-            newposition = max(0.0, min(Config.Z_MAX, newposition))
+    # Fast manual jog feed
+    feedrate(Config.JOG_FEED_MM_PER_MIN)
 
-        # 3) Execute the move
-        move(ser, axis, newposition)
-        return True
-    finally:
-        ser.close()
+    # Relative move for a tight jog
+    send_now("G91")
+    send_now(f"G1 {axis}{delta:.3f} F{int(Config.JOG_FEED_MM_PER_MIN)}")
+    send_now("G90")
+    return True
 
-def _ensure_conected() -> bool:
-    if connect_event().is_set():
-        return True
-    return connect_serial() is not None
-
-# def deltaMove(delta: float, axis: str) -> bool:
-#     """
-#     Move by a delta (mm) on the specified axis (X/Y/Z).
-#     Applies bounds [0, MAX].
-#     """
-#     axis = axis.upper()
-#     if axis not in ("X", "Y", "Z"):
-#         print("Invalid axis ID:", axis)
-#         return False
-
-#     current = get_position_axis(axis)
-#     if current is None:
-#         print(f"Could not read current {axis} position.")
-#         return False
-
-#     newpos = current + float(delta)
-
-#     # Clamp
-#     if axis == "X":
-#         newpos = max(0.0, min(Config.X_MAX, newpos))
-#     elif axis == "Y":
-#         newpos = max(0.0, min(Config.Y_MAX, newpos))
-#     elif axis == "Z":
-#         newpos = max(0.0, min(Config.Z_MAX, newpos))
-
-#     ok = move(axis, newpos)
-#     return ok
-
-
-# Preserve the default "value" step for rotation (E-axis)
+# Default rotation step (kept from config)
 value = Config.E_AXIS_DEFAULT_STEP
 
 def _allow_cold_extrusion_if_needed() -> None:
     if Config.E_AXIS_ALLOW_COLD_EXTRUSION:
-        send_now("M302 P1")  # Allow cold extrusion
+        send_now("M302 P1")
 
 def rotate_nozzle_clockwise(step: float = value) -> Tuple[bool, str]:
-    """
-    Advance E-axis positively by `step`.
-    Persists the E position to disk so multiple processes share state.
-    """
+    if not _ensure_connected():
+        return False, "Serial not connected"
     try:
         _allow_cold_extrusion_if_needed()
-        e_pos = _read_e_axis_position(0.0)
-        target = e_pos + float(step)
-        ok = move("E", target)
+        e = _read_e_axis_position(0.0) + float(step)
+        ok = move_absolute("E", e)
         if ok:
-            _write_e_axis_position(target)
+            _write_e_axis_position(e)
             return True, "Nozzle rotated clockwise."
         return False, "Failed to rotate nozzle clockwise."
     except Exception as e:
         return False, f"Rotate clockwise error: {e}"
 
 def rotate_nozzle_counterclockwise(step: float = value) -> Tuple[bool, str]:
-    """
-    Advance E-axis negatively by `step`.
-    """
+    if not _ensure_connected():
+        return False, "Serial not connected"
     try:
         _allow_cold_extrusion_if_needed()
-        e_pos = _read_e_axis_position(0.0)
-        target = e_pos - float(step)
-        ok = move("E", target)
+        e = _read_e_axis_position(0.0) - float(step)
+        ok = move_absolute("E", e)
         if ok:
-            _write_e_axis_position(target)
+            _write_e_axis_position(e)
             return True, "Nozzle rotated counterclockwise."
         return False, "Failed to rotate nozzle counterclockwise."
     except Exception as e:
         return False, f"Rotate counterclockwise error: {e}"
 
-
 def go2INIT() -> Tuple[bool, str]:
-    """
-    Homes XYZ, restores E to persisted angle, lifts Z, then moves to INIT (center + offsets).
-    Mirrors the original flow and messages.
-    """
+    """Home XYZ, restore E, lift Z, move to INIT (center + offsets)."""
+    if not _ensure_connected():
+        return False, "Serial not connected"
     try:
-        _ensure_units_and_modes()
+        _ensure_units_and_absolute()
         _allow_cold_extrusion_if_needed()
 
-        # Home XYZ
         for ax in ("X", "Y", "Z"):
             if not home(ax):
                 return False, f"Failed to home {ax}"
 
         # Restore E-axis
         e_axis_position = _read_e_axis_position(0.0)
-        if not move("E", e_axis_position):
+        if not move_absolute("E", e_axis_position):
             return False, "Failed to restore E-axis position."
 
-        # Set a fast feedrate, then lift Z with X=0 Y=0
+        # Fast feed then lift Z with X=0, Y=0
         feedrate(Config.FAST_FEED_MM_PER_MIN)
         send_gcode("G0 X0 Y0 Z10")
         wait_for_motion_complete(10.0)
 
-        # Compute INIT (center + offsets)
+        # INIT coordinates
         Xpos = Config.OFFSET_X + (Config.X_MAX / 2.0)
         Ypos = Config.OFFSET_Y + (Config.Y_MAX / 2.0)
         Zpos = Config.OFFSET_Z + (Config.Z_MAX / 2.0)
 
-        # Move to INIT
-        cmd = f"G0 X{Xpos:.3f} Y{Ypos:.3f} Z{Zpos:.3f}"
-        send_gcode(cmd)
+        send_gcode(f"G0 X{Xpos:.3f} Y{Ypos:.3f} Z{Zpos:.3f}")
         wait_for_motion_complete(15.0)
 
-        return True, f"Nozzle initialized and set to locked position: {e_axis_position:.3f} degrees"
+        return True, f"Nozzle initialized and set to locked position: {e_axis_position:.3f}"
     except Exception as e:
         return False, f"INIT error: {e}"
 
-
 def go2StartScan() -> bool:
-    """
-    As in original: set fast feed, move X to 0 (manual adjustment allowed).
-    """
+    """Prepare for scan; move to X=0 at fast feed."""
+    if not _ensure_connected():
+        return False
     try:
-        _ensure_units_and_modes()
+        _ensure_units_and_absolute()
         feedrate(Config.FAST_FEED_MM_PER_MIN)
         send_gcode("G0 X0")
         wait_for_motion_complete(10.0)
@@ -351,40 +243,58 @@ def go2StartScan() -> bool:
         print(f"[go2StartScan] {e}")
         return False
 
-
 def ScanPath() -> bool:
-    """
-    Move across full X span at scan feedrate.
-    """
+    """Traverse X across full span at scan feed (kept as-is)."""
+    if not _ensure_connected():
+        return False
     try:
-        _ensure_units_and_modes()
+        _ensure_units_and_absolute()
         feedrate(Config.SCAN_SPEED_MM_PER_MIN)
         send_gcode(f"G0 X{Config.X_MAX:.3f}")
-        wait_for_motion_complete(60.0)  # generous timeout for full-span move
+        wait_for_motion_complete(120.0)
         return True
     except Exception as e:
         print(f"[ScanPath] {e}")
         return False
 
+# --------------------------------------------------------------------------------------
+# Compatibility shims (for legacy code paths that might import these names)
+# --------------------------------------------------------------------------------------
+def connectprinter():
+    """Legacy helper. Prefer the singleton. Returns the port or None."""
+    return connect_serial()
 
-# ---------------- Old demo / test helper (kept) ----------------
+def getresponse(_serialconn=None) -> bytes:
+    """Legacy helper: return one 'line' from M114 as bytes."""
+    lines = _sm_get_position()
+    first = (lines[0] if lines else "").encode("utf-8", errors="ignore")
+    return first
 
+def waitresponses(_serialconn=None, _mytext: str = "") -> bool:
+    """Legacy helper: wait until moves finished (M400 ok)."""
+    return wait_for_motion_complete(timeout=10.0)
+
+def returnresponses(_serialconn=None, _mytext: str = "") -> List[str]:
+    """Legacy helper: return M114 lines."""
+    return _sm_get_position()
+
+# --------------------------------------------------------------------------------------
+# Old demo helper (unchanged)
+# --------------------------------------------------------------------------------------
 def unknowns() -> None:
-    """
-    Old demo showing a sequence of moves.
-    """
     try:
-        _ensure_units_and_modes()
-        # Home XY and set slow feed
-        home("X")
-        home("Y")
-        feedrate(100.0)  # mm/min
-        time.sleep(1.0)
+        if not _ensure_connected():
+            print("[unknowns] Not connected")
+            return
+        _ensure_units_and_absolute()
+        home("X"); home("Y")
+        feedrate(100.0)
+        time.sleep(0.5)
 
         D = 0.0
         for _ in range(15):
             D += 1.0
-            move("X", D)
+            move_absolute("X", D)
             _ = get_position()
             time.sleep(0.2)
     except Exception as e:
