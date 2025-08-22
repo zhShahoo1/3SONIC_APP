@@ -1,0 +1,13 @@
+flask
+opencv-python
+numpy
+pillow
+pydicom
+pandas
+matplotlib
+simpleitk
+scikit-image
+tqdm
+pyserial
+keyboard
+pygetwindow

@@ -1,0 +1,272 @@
+/* ==========================================================================
+   3SONIC – Application Styles
+   --------------------------------------------------------------------------
+   - Dark theme, professional look
+   - Responsive grid layout
+   - Card-based UI with subtle glassmorphism
+   - Modern buttons, icons, toasts
+   ========================================================================== */
+
+/* Reset & base */
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+}
+
+:root {
+  --bg-dark: #0d1117;
+  --bg-card: rgba(22, 27, 34, 0.9);
+  --bg-header: #032735;
+  --primary: #00bfa5;
+  --primary-hover: #009688;
+  --danger: #ef4444;
+  --success: #22c55e;
+  --text: #e5e7eb;
+  --text-dim: #9ca3af;
+  --radius: 10px;
+  --shadow: 0 4px 20px rgba(0, 0, 0, 0.5);
+  --transition: all 0.25s ease;
+}
+
+html,
+body {
+  height: 100%;
+}
+
+body {
+  background: var(--bg-dark);
+  color: var(--text);
+  font-family: system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif;
+  line-height: 1.5;
+  display: flex;
+  flex-direction: column;
+}
+
+/* ----------------------------- Layout ----------------------------- */
+
+header {
+  background: var(--bg-header);
+  color: var(--text);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0.5rem 1rem;
+  box-shadow: var(--shadow);
+  z-index: 10;
+}
+
+header .logo {
+  height: 48px;
+  object-fit: contain;
+}
+
+nav ul {
+  display: flex;
+  gap: 0.75rem;
+  list-style: none;
+}
+
+main {
+  flex: 1;
+  display: grid;
+  grid-template-columns: 280px 1fr 280px;
+  gap: 1rem;
+  padding: 1rem;
+}
+
+footer {
+  background: var(--bg-header);
+  color: var(--text-dim);
+  padding: 0.75rem 1rem;
+  font-size: 0.85rem;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+
+/* ----------------------------- Cards ----------------------------- */
+
+.card,
+.scanner-controls,
+.rendering-controls {
+  background: var(--bg-card);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow);
+  padding: 1rem;
+  backdrop-filter: blur(10px);
+}
+
+.scanner-display .card-image {
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  background: #111;
+  border-radius: var(--radius);
+  overflow: hidden;
+}
+
+.dispimg_us {
+  max-width: 100%;
+  max-height: 80vh;
+  border-radius: var(--radius);
+  transition: transform 0.25s ease;
+}
+
+.dispimg_us:hover {
+  transform: scale(1.01);
+}
+
+/* ----------------------------- Buttons ----------------------------- */
+
+.button {
+  background: var(--bg-card);
+  color: var(--text);
+  border: 1px solid #1f2937;
+  border-radius: var(--radius);
+  padding: 0.5rem 1rem;
+  font-size: 0.9rem;
+  font-weight: 600;
+  cursor: pointer;
+  transition: var(--transition);
+}
+
+.button:hover {
+  background: #1f2937;
+  color: white;
+  transform: translateY(-2px);
+}
+
+.button:disabled,
+.button.is-loading {
+  opacity: 0.6;
+  pointer-events: none;
+}
+
+.start-scan-button {
+  background: var(--primary);
+  border: none;
+  color: black;
+}
+.start-scan-button:hover {
+  background: var(--primary-hover);
+  color: white;
+}
+
+.multi-path-button {
+  background: var(--primary);
+  border: none;
+  color: black;
+}
+.multi-path-button:hover {
+  background: var(--primary-hover);
+  color: white;
+}
+
+/* Icon buttons (header toggle) */
+.icon-button {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 12px;
+  background: var(--primary);
+  color: #111;
+  border: none;
+  border-radius: var(--radius);
+  font-weight: 600;
+  cursor: pointer;
+  transition: var(--transition);
+}
+.icon-button img.icon {
+  height: 18px;
+}
+.icon-button:hover {
+  background: var(--primary-hover);
+  transform: translateY(-2px);
+}
+.icon-button:active {
+  background: #333;
+  transform: translateY(0);
+  color: white;
+}
+
+/* ----------------------------- Controls ----------------------------- */
+
+.manual-adjustments,
+.automatic-controls,
+.rendering-controls {
+  margin-top: 1rem;
+}
+
+.manual-adjustments h2,
+.automatic-controls h2,
+.rendering-controls h2 {
+  font-size: 0.9rem;
+  font-weight: 500;
+  color: var(--text-dim);
+  margin-bottom: 0.75rem;
+}
+
+.adjustment-group {
+  display: flex;
+  gap: 0.5rem;
+  margin-bottom: 0.5rem;
+}
+
+.distance-correction {
+  margin-top: 0.5rem;
+}
+
+.distance-correction label {
+  font-size: 0.85rem;
+  color: var(--text-dim);
+  margin-right: 0.5rem;
+}
+
+/* ----------------------------- Modal ----------------------------- */
+
+.modal {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.7);
+  display: none;
+  place-items: center;
+  z-index: 1000;
+}
+
+.modal-content {
+  background: var(--bg-card);
+  padding: 2rem;
+  border-radius: var(--radius);
+  box-shadow: var(--shadow);
+  color: var(--text);
+}
+
+/* ----------------------------- Toasts ----------------------------- */
+/* (JS injects .toast, but ensure baseline font & transition) */
+.toast {
+  font: 600 13px/1.4 system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif;
+}
+
+/* ----------------------------- Responsive ----------------------------- */
+
+@media (max-width: 1200px) {
+  main {
+    grid-template-columns: 220px 1fr;
+  }
+  .rendering-controls {
+    grid-column: span 2;
+  }
+}
+
+@media (max-width: 768px) {
+  main {
+    grid-template-columns: 1fr;
+  }
+  .scanner-controls,
+  .rendering-controls {
+    order: -1;
+  }
+}

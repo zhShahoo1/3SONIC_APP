@@ -1,0 +1,101 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>Scanning — 3SONIC</title>
+
+  <link rel="stylesheet" href="{{ url_for('static', filename='css/app.css') }}" />
+  <link rel="preload" as="image" href="{{ url_for('static', filename='images/3SONICLogo.png') }}" />
+</head>
+<body>
+
+<header>
+  <img src="{{ url_for('static', filename='images/3SONICLogo.png') }}" alt="3SONIC Logo" class="logo" />
+  <nav>
+    <ul>
+      <li><button class="button" onclick="window.location.href='/'">Home</button></li>
+      <li><button class="button" onclick="history.back()">Back</button></li>
+    </ul>
+  </nav>
+</header>
+
+<main class="scanning-page">
+  <section class="scan-status card">
+    <div class="scan-status__header">
+      <h1 class="thin-title">Scanning in progress</h1>
+      <div class="spinner" aria-label="Scanning..."></div>
+    </div>
+
+    <p class="muted">
+      Please do not press any buttons on the printer or the app until the scan completes.
+    </p>
+
+    <div class="scan-destination">
+      <h2 class="thin-title">Data destination</h2>
+      <div class="path-tile">
+        <div class="path-tile__label">Folder</div>
+        <div class="path-tile__value" title="{{ link2files }}">{{ link2files }}</div>
+      </div>
+      {% if linkshort %}
+      <div class="path-tile">
+        <div class="path-tile__label">Session ID</div>
+        <div class="path-tile__value">{{ linkshort }}</div>
+      </div>
+      {% endif %}
+    </div>
+
+    <div class="actions-row">
+      <button class="button" data-action="open-itk">Open in ITK-SNAP</button>
+      <button class="button" data-action="overview">Overview Image</button>
+      <button class="button" onclick="window.location.href='/'">Return to UI</button>
+    </div>
+
+    <div class="tips">
+      <h3 class="thin-title">Tips</h3>
+      <ul>
+        <li>Keep the specimen stable in the water bath during acquisition.</li>
+        <li>When the scan completes, the app will process frames into a DICOM series.</li>
+        <li>You can review a quick overview via <em>Overview Image</em>, then open the series in ITK-SNAP.</li>
+      </ul>
+    </div>
+  </section>
+</main>
+
+<footer>
+  <div>
+    <p>Support: fatemeh.makouei@regionh.dk | +45 50243760</p>
+  </div>
+  <div>
+    <a href="https://www.surgic.dk/" target="_blank" rel="noopener">
+      <img src="{{ url_for('static', filename='images/surgic.png') }}" alt="Company Logo" style="width:40px;height:40px;" />
+    </a>
+  </div>
+</footer>
+
+<script src="{{ url_for('static', filename='js/app.js') }}"></script>
+
+<!-- Inline minimal spinner CSS (uses your existing palette) -->
+<style>
+  .scanning-page { display: grid; place-items: start center; padding: 1rem; }
+  .scan-status { width: 100%; max-width: 960px; background: #032735; border-radius: .5rem; padding: 1rem 1.25rem; }
+  .scan-status__header { display: flex; align-items: center; gap: .75rem; }
+  .spinner {
+    width: 22px; height: 22px;
+    border: 3px solid rgba(255,255,255,0.25);
+    border-top-color: #00BFA5;
+    border-radius: 50%;
+    animation: spin 0.9s linear infinite;
+  }
+  @keyframes spin { to { transform: rotate(360deg); } }
+  .muted { color: #b6cfc5; margin: .5rem 0 1rem; }
+  .scan-destination { margin: .5rem 0 1rem; }
+  .path-tile { display: grid; grid-template-columns: 120px 1fr; gap: .75rem; padding: .5rem .75rem; background: rgba(255,255,255,0.04); border-radius: .5rem; margin-bottom: .5rem; }
+  .path-tile__label { color: #b6cfc5; }
+  .path-tile__value { color: #fff; word-break: break-all; }
+  .actions-row { display: flex; gap: .5rem; flex-wrap: wrap; margin: .75rem 0 1rem; }
+  .tips ul { margin-left: 1.25rem; }
+  .card { box-shadow: 0 4px 8px rgba(0,0,0,0.15); }
+</style>
+</body>
+</html>

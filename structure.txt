@@ -1,0 +1,43 @@
+project-root/
+│
+├── app/                          # main application package
+│   ├── __init__.py  #done              # app factory if needed
+│   ├── config.py                  # central configuration (Config class)
+│   │
+│   ├── core/                      # core functionality (hardware & imaging)
+│   │   ├── serial_manager.py      # singleton serial/G-code manager
+│   │   ├── ultrasound_sdk.py      # wrapper for usgfw2wrapper.dll
+│   │   ├── scanner_control.py     # high-level printer/probe movement logic
+│   │
+│   ├── utils/                     # helpers/utilities
+│   │   ├── webcam.py              # webcam/video feed
+│   │
+│   ├── scripts/                   # standalone scripts (triggered by app)
+│   │   ├── record.py              # acquisition script
+│   │   ├── imconv.py              # convert frames → dicom series
+│   │   ├── multisweep.py          # merge multiple sweeps
+│   │   ├── dicomwritevolume.py    # helper for dicom writing
+│   │   └── postprocessing.py      # generate overview figures & nifti
+│   │
+│   ├── integrations/              # external viewers & interoperability
+│   │   └── itk_snap.py            # ITK-Snap launcher
+│   │
+│   ├── static/                    # static assets (served by flask)
+│   │   ├── css/
+│   │   │   └── my.css
+│   │   ├── js/
+│   │   │   └── mine.js
+│   │   ├── images/                # logos, icons (renamed from 3SONIC/)
+│   │   │   └── ...
+│   │   └── data/                  # scan outputs (timestamped subfolders)
+│   │
+│   ├── templates/                 # flask html templates
+│   │   ├── main.html
+│   │   └── scanning.html
+│   │
+│   └── main.py                    # flask entrypoint (routes, ui)
+│
+├── usgfw2wrapper.dll              # ultrasound driver dll
+├── dcmimage.dcm                   # dicom template
+├── requirements.txt               # pinned dependencies
+└── README.md                      # project documentation
