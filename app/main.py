@@ -30,7 +30,7 @@ else:
     from .core import ultrasound_sdk
     from .utils.webcam import generate_frames, camera
     from .integrations.itk_snap import open_itksnap_with_dicom_series
-    from .core.serial_manager import start_serial                   # ✅ added
+    from .core.serial_manager import start_serial, send_now, send_gcode                   # ✅ added
     from .core.keyboard_control import start_keyboard_listener, enable_keyboard  # ✅ added
 
 
@@ -140,6 +140,65 @@ def _newest_data_folder_name() -> str:
         return ""
     return sorted(subdirs, key=lambda p: p.name)[-1].name
 
+# ------------------------------------------------------------------------------
+# insert water bath
+# ------------------------------------------------------------------------------
+def _wait_until_axis(axis: str, target: float,
+                     tol: float = Config.POS_TOL_MM,
+                     timeout_s: float = Config.POLL_TIMEOUT_S) -> bool:
+    import time
+    t0 = time.time()
+    while (time.time() - t0) <= timeout_s:
+        pos = pssc.get_position_axis(axis)
+        if pos is not None and abs(pos - target) <= tol:
+            return True
+        time.sleep(Config.POLL_INTERVAL_S)
+    return False
+
+
+@app.route("/api/lower-plate", methods=["POST"])
+def api_lower_plate():
+    try:
+        send_now("G90")
+        send_now(f"G1 Z{Config.TARGET_Z_MM:.3f} F{Config.Z_FEED_MM_PER_MIN}")
+        wait_for_motion_complete(10.0)
+
+        if not _wait_until_axis("Z", Config.TARGET_Z_MM):
+            return jsonify(success=False,
+                           message=f"Timeout: Z did not reach {Config.TARGET_Z_MM} mm",
+                           status="Error"), 500
+
+        return jsonify(success=True,
+                       message="Plate lowered to insert bath",
+                       status="Place specimen and click again")
+    except Exception as e:
+        return jsonify(success=False, message=str(e), status="Error"), 500
+
+
+@app.route("/api/position-for-scan", methods=["POST"])
+def api_position_for_scan():
+    try:
+        send_now("G90")
+        send_now(f"G1 X{Config.SCAN_POSE['X']:.3f} "
+                 f"Y{Config.SCAN_POSE['Y']:.3f} "
+                 f"Z{Config.SCAN_POSE['Z']:.3f} "
+                 f"F{Config.XYZ_FEED_MM_PER_MIN}")
+        wait_for_motion_complete(15.0)
+
+        ok_x = _wait_until_axis("X", Config.SCAN_POSE["X"])
+        ok_y = _wait_until_axis("Y", Config.SCAN_POSE["Y"])
+        ok_z = _wait_until_axis("Z", Config.SCAN_POSE["Z"])
+
+        if not (ok_x and ok_y and ok_z):
+            return jsonify(success=False,
+                           message="Timeout: scanner did not reach scan pose",
+                           status="Error"), 500
+
+        return jsonify(success=True,
+                       message="Scanner positioned for scan",
+                       status="Ready")
+    except Exception as e:
+        return jsonify(success=False, message=str(e), status="Error"), 500
 
 # ------------------------------------------------------------------------------
 # Routes

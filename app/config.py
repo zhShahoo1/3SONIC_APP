@@ -166,3 +166,12 @@ class Config:
     def dicom_template_path() -> Path:
         """Resolve path to the DICOM template file (dcmimage.dcm)."""
         return resource_path(Config.DICOM_TEMPLATE_NAME)
+    
+     # Service / scan positioning
+    TARGET_Z_MM: float = 100.0
+    SCAN_POSE = {"X": 53.5, "Y": 53.5, "Z": 10.0}  # tweak to your rig
+    Z_FEED_MM_PER_MIN: int = 1500
+    XYZ_FEED_MM_PER_MIN: int = 2000
+    POS_TOL_MM: float = 0.02       # tolerance when comparing positions
+    POLL_INTERVAL_S: float = 0.10  # polling interval
+    POLL_TIMEOUT_S: float = 5.0    # max time to wait

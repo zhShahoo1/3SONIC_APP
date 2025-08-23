@@ -44,10 +44,14 @@
   <section class="scanner-controls">
     <div class="scan-buttons">
       <button class="button start-scan-button" data-action="scan">
-        <i class="fas fa-search"></i> Start Scan
+        <i class="fas fa-play-circle"></i> Start Scan
       </button>
       <button class="button multi-path-button" data-action="multipath">
-        <i class="fas fa-project-diagram"></i> Multi Path
+        <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 50 30" fill="currentColor" style="vertical-align: middle;">
+          <polygon points="0,0 20,15 0,30"></polygon>
+          <polygon points="20,0 40,15 20,30"></polygon>
+        </svg>
+        Dual Sweep
       </button>
     </div>
 
@@ -76,8 +80,9 @@
         </button>
 
         <!-- center placeholder -->
-        <button class="button dpad-btn dpad-center" data-action="insert-specimen" aria-label="Insert Specimen">
-          Insert&nbsp;Specimen
+        <button class="button special" id="lower-plate-btn">
+          <i class="fas fa-water"></i>
+          <span>Insert Bath</span>
         </button>
 
         <button class="button dpad-btn dpad-right" data-action="x-plus" aria-label="X+ (Right)">
@@ -95,10 +100,10 @@
       <!-- Z row under the D-Pad -->
       <div class="z-row">
         <button class="button z-btn" data-action="z-plus">
-          <i class="fas fa-arrow-up"></i> +Z
+          <i class="fas fa-arrow-up"></i> Z
         </button>
         <button class="button z-btn" data-action="z-minus">
-          -Z <i class="fas fa-arrow-down"></i>
+          Z <i class="fas fa-arrow-down"></i>
         </button>
       </div>
 
