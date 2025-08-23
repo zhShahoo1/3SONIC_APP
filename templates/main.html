@@ -5,11 +5,11 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
   <title>3SONIC Ultrasound Scanner</title>
 
-  <!-- App styles -->
-  <link rel="stylesheet" href="{{ url_for('static', filename='css/app.css') }}" />
-
   <!-- Icons -->
   <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css"/>
+
+  <!-- App styles -->
+  <link rel="stylesheet" href="{{ url_for('static', filename='css/app.css') }}">
 </head>
 <body>
 <header>
@@ -17,7 +17,7 @@
   <nav>
     <ul>
       <li>
-        <button class="icon-button" data-action="show-ultrasound">
+        <button class="icon-button active" data-action="show-ultrasound">
           <img src="{{ url_for('static', filename='images/scan.png') }}" alt="Ultrasound" class="icon" />
           Ultrasound
         </button>
@@ -53,48 +53,90 @@
 
     <div class="automatic-controls">
       <h2>Automatic Controls</h2>
-      <button class="button" data-action="init">Initialize Scanner</button>
+      <button class="button" data-action="init">
+        <i class="fas fa-cog"></i> Initialize Scanner
+      </button>
     </div>
 
     <div class="manual-adjustments">
       <h2>Manual Adjustments</h2>
 
-      <div class="adjustment-group">
-        <button class="button" data-action="x-plus">+X ◄</button>
-        <button class="button" data-action="x-minus">-X ►</button>
+      <!-- D-Pad for X/Y -->
+      <div class="dpad">
+        <!-- row 1 -->
+        <span></span>
+        <button class="button dpad-btn dpad-up" data-action="y-minus" aria-label="Y- (Up)">
+          <i class="fas fa-caret-up"></i>
+        </button>
+        <span></span>
+
+        <!-- row 2 -->
+        <button class="button dpad-btn dpad-left" data-action="x-minus" aria-label="X- (Left)">
+          <i class="fas fa-caret-left"></i>
+        </button>
+
+        <!-- center placeholder -->
+        <button class="button dpad-btn dpad-center" data-action="insert-specimen" aria-label="Insert Specimen">
+          Insert&nbsp;Specimen
+        </button>
+
+        <button class="button dpad-btn dpad-right" data-action="x-plus" aria-label="X+ (Right)">
+          <i class="fas fa-caret-right"></i>
+        </button>
+
+        <!-- row 3 -->
+        <span></span>
+        <button class="button dpad-btn dpad-down" data-action="y-plus" aria-label="Y+ (Down)">
+          <i class="fas fa-caret-down"></i>
+        </button>
+        <span></span>
       </div>
 
-      <div class="adjustment-group">
-        <button class="button" data-action="y-plus">+Y ▼</button>
-        <button class="button" data-action="y-minus">-Y ▲</button>
-      </div>
-
-      <div class="adjustment-group">
-        <button class="button" data-action="z-plus">+Z ▼</button>
-        <button class="button" data-action="z-minus">-Z ▲</button>
+      <!-- Z row under the D-Pad -->
+      <div class="z-row">
+        <button class="button z-btn" data-action="z-plus">
+          <i class="fas fa-arrow-up"></i> +Z
+        </button>
+        <button class="button z-btn" data-action="z-minus">
+          -Z <i class="fas fa-arrow-down"></i>
+        </button>
       </div>
 
       <!-- Rotation -->
       <div class="adjustment-group">
-        <button class="button" data-action="rot-cw">↻ CW</button>
-        <button class="button" data-action="rot-ccw">↺ CCW</button>
+        <button class="button" data-action="rot-cw"><i class="fas fa-redo"></i> CW</button>
+        <button class="button" data-action="rot-ccw">CCW <i class="fas fa-undo"></i></button>
       </div>
     </div>
 
     <!-- Step selector -->
     <div class="distance-correction">
-      <label for="distance">Steps:</label>
-      <select id="distance" name="distance">
-        <option value="0.1">0.1 mm</option>
-        <option value="1" selected>1 mm</option>
-        <option value="10">10 mm</option>
+      <label for="distance">Step Size:</label>
+      <select id="distance" name="distance" class="distance-select">
+        <optgroup label="Fine">
+          <option value="0.1">0.1 mm</option>
+          <option value="0.5">0.5 mm</option>
+        </optgroup>
+        <optgroup label="Medium">
+          <option value="1" selected>1 mm</option>
+          <option value="3">3 mm</option>
+        </optgroup>
+        <optgroup label="Coarse">
+          <option value="5">5 mm</option>
+          <option value="10">10 mm</option>
+        </optgroup>
       </select>
+      <!-- Optional display: <span id="step-display" class="step-display">1 mm</span> -->
     </div>
   </section>
 
   <!-- Center panel: display -->
   <section class="scanner-display">
     <div class="card">
+      <div class="card-header">
+        <i class="fas fa-image"></i>
+        <span id="display-title">Ultrasound View</span>
+      </div>
       <div class="card-image">
         <img id="im1" src="{{ url_for('ultrasound_video_feed') }}" alt="Ultrasound" class="dispimg_us" />
         <img id="im2" src="{{ url_for('video_feed') }}" alt="Webcam" class="dispimg_us" style="display:none;" />
@@ -106,10 +148,14 @@
   <section class="rendering-controls">
     <h2>Rendering</h2>
     <div class="adjustment-group">
-      <button class="button" data-action="open-itk">Open in ITK-Snap</button>
+      <button class="button" data-action="open-itk">
+        <i class="fas fa-external-link-alt"></i> Open in ITK-Snap
+      </button>
     </div>
     <div class="adjustment-group">
-      <button class="button" data-action="overview">Overview Image</button>
+      <button class="button" data-action="overview">
+        <i class="fas fa-camera"></i> Overview Image
+      </button>
     </div>
   </section>
 </main>
@@ -120,12 +166,12 @@
   </div>
   <div>
     <a href="https://www.surgic.dk/" target="_blank" rel="noopener">
-      <img src="{{ url_for('static', filename='images/surgic.png') }}" alt="Company Logo" style="width:40px;height:40px;" />
+      <img src="{{ url_for('static', filename='images/surgic.png') }}" alt="Company Logo" style="width:40px;height:40px;filter:brightness(1.2)" />
     </a>
   </div>
 </footer>
 
 <!-- App script -->
-<script src="{{ url_for('static', filename='js/app.js') }}"></script>
+<script src="{{ url_for('static', filename='app.js') }}"></script>
 </body>
 </html>
