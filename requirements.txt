@@ -11,3 +11,4 @@ tqdm
 pyserial
 keyboard
 pygetwindow
+pywebview

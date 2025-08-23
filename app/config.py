@@ -1,4 +1,6 @@
 # app/config.py
+from __future__ import annotations
+
 import os
 import sys
 from pathlib import Path
@@ -7,24 +9,21 @@ from dataclasses import dataclass
 
 def _detect_base_dir() -> Path:
     """
-    Choose a base directory that works both:
-      - in development (source tree),
-      - and in a frozen EXE (e.g., PyInstaller, cx_Freeze).
+    Choose a base directory that works in both:
+      - development (source tree)
+      - frozen EXE (PyInstaller/cx_Freeze)
+    In frozen mode we place writable content next to the EXE (NOT _MEIPASS).
     """
-    if getattr(sys, "frozen", False):  # Running as bundled EXE
-        # sys._MEIPASS is the temp dir with bundled resources
-        bundle_dir = Path(getattr(sys, "_MEIPASS", Path.cwd()))
-        # put writable data next to the executable (not inside _MEIPASS)
-        exe_dir = Path(sys.executable).resolve().parent
-        return exe_dir
-    # dev: use repo root = folder containing this /app
+    if getattr(sys, "frozen", False):
+        return Path(sys.executable).resolve().parent
+    # dev: repo root (folder that contains /app)
     return Path(__file__).resolve().parent.parent
 
 
 def resource_path(relative: str) -> Path:
     """
-    Get a path to a bundled/read-only resource (e.g. templates, DLLs, DICOM template).
-    In frozen mode, prefer sys._MEIPASS; otherwise use repo paths.
+    Resolve a path to a bundled/read-only resource (DLLs, templates, dcmimage.dcm).
+    In frozen mode, prefer sys._MEIPASS (bundle temp dir). In dev, use repo paths.
     """
     if getattr(sys, "frozen", False):
         base = Path(getattr(sys, "_MEIPASS", Path.cwd()))
@@ -38,34 +37,40 @@ class SerialProfile:
     description_patterns: tuple[str, ...] = (
         "USB-SERIAL", "CH340", "CH341", "USB-SERIAL CH340", "USB SERIAL",
     )
-    # optionally: match by VID/PID if needed in the future
+    # Optional future: match by VID/PID
 
 
 class Config:
     """
-    Centralized, environment-overridable configuration.
-    Import anywhere:   from app.config import Config, resource_path
+    Centralized, environment‑overridable configuration.
+
+    Import everywhere as:
+        from app.config import Config, resource_path
     """
 
-    # ---------------- Paths (exe & dev friendly) ----------------
-    BASE_DIR: Path = _detect_base_dir()
-    APP_DIR: Path = (BASE_DIR).resolve()
-    STATIC_DIR: Path = (APP_DIR / "static").resolve()
-    TEMPLATES_DIR: Path = (APP_DIR / "templates").resolve()
+    # ---------------- Paths (dev & EXE friendly) ----------------
+    BASE_DIR: Path = _detect_base_dir()                 # repo root in dev; EXE folder when frozen
+    APP_DIR: Path = (BASE_DIR / "app").resolve() if (BASE_DIR / "app").exists() else BASE_DIR
+    STATIC_DIR: Path = (BASE_DIR / "static").resolve()  # we bundle static -> dist/<name>/static
+    TEMPLATES_DIR: Path = (BASE_DIR / "templates").resolve()
 
-    # Data folders (writable). Keep under BASE_DIR/static/data to align with your current app.
+    # Writable output (keep under static/data to match your current files/links)
     DATA_DIR: Path = (STATIC_DIR / "data").resolve()
     LOGS_DIR: Path = (DATA_DIR / "logs").resolve()
 
-    # Create if missing (safe to call on import)
-    for p in (DATA_DIR, LOGS_DIR):
-        p.mkdir(parents=True, exist_ok=True)
+    # Create if missing
+    for _p in (DATA_DIR, LOGS_DIR):
+        _p.mkdir(parents=True, exist_ok=True)
+
+    # Tiny flag files used by your flow
+    SCANNING_FLAG_FILE: Path = (BASE_DIR / "scanning").resolve()
+    MULTISWEEP_FLAG_FILE: Path = (BASE_DIR / "multisweep").resolve()
+    RECDIR_FILE: Path = (BASE_DIR / "recdir").resolve()
 
     # Security
     SECRET_KEY: str = os.environ.get("SECRET_KEY", "dev-key-change-in-production")
 
     # ---------------- Scanner / Geometry ----------------
-    # Physical travel limits (mm)
     X_MAX: float = float(os.environ.get("X_MAX", 118))
     Y_MAX: float = float(os.environ.get("Y_MAX", 118))
     Z_MAX: float = float(os.environ.get("Z_MAX", 160))
@@ -76,42 +81,29 @@ class Config:
     OFFSET_Z: float = float(os.environ.get("OFFSET_Z", -70.0))
 
     # ---------------- Feedrates / speeds ----------------
-    # Primary scan speed in mm/min (used only for automated ScanPath; unchanged)
+    # Automated scan path speed (leave as-is)
     SCAN_SPEED_MM_PER_MIN: float = float(os.environ.get("SCAN_SPEED", 90))
-    # Quick move / init feedrate (used by go2StartScan and init; unchanged)
+    # Fast feed for init / go2StartScan (leave as-is)
     FAST_FEED_MM_PER_MIN: float = float(os.environ.get("FAST_FEED", 20 * 60))  # 20 mm/s -> 1200 mm/min
-    # >>> ONLY NEW/CHANGED LINE: dedicated manual jog feedrate for GUI X/Y/Z moves <<<
-    JOG_FEED_MM_PER_MIN: float = float(os.environ.get("JOG_FEED", 2400))       # ~40 mm/s for snappy manual nudges
-
-    # E-axis (nozzle rotation) defaults
-    E_AXIS_DEFAULT_STEP: float = float(os.environ.get("E_AXIS_STEP", 0.1))
-    E_AXIS_ALLOW_COLD_EXTRUSION: bool = os.environ.get("E_AXIS_COLD", "1") == "1"
+    # Dedicated manual jog feed for GUI X/Y/Z moves (snappy but safe)
+    JOG_FEED_MM_PER_MIN: float = float(os.environ.get("JOG_FEED", 2400))       # ~40 mm/s
 
     # ---------------- Ultrasound / Acquisition ----------------
-    # Live preview frame size (ultrasound.py uses 1024x1024)
+    # Live preview size
     ULTRA_W: int = int(os.environ.get("ULTRASOUND_WIDTH", 1024))
     ULTRA_H: int = int(os.environ.get("ULTRASOUND_HEIGHT", 1024))
 
-    # Record-time parameters (from record.py)
-    # travel_speed_x: probe speed along X during capture (mm/s)
-    TRAVEL_SPEED_X_MM_PER_S: float = float(os.environ.get("TRAVEL_SPEED_X", 500.0))  # ~5 mm/s (kept as-is)
-    # elevation resolution target (mm)
+    # Record-time parameters (kept consistent with your original)
+    TRAVEL_SPEED_X_MM_PER_S: float = float(os.environ.get("TRAVEL_SPEED_X", 500.0))  # ~5 mm/s
     ELEV_RESOLUTION_MM: float = float(os.environ.get("ELEV_RESOLUTION", 0.06))
-    # total X span for sampling (mm)
     DX_MM: float = float(os.environ.get("DX_MM", 118))
-    # target frame rate (Hz)
     TARGET_FPS: float = float(os.environ.get("TARGET_FPS", 25))
-
-    # Flags persisted in tiny files (compatible with your current workflow)
-    SCANNING_FLAG_FILE: Path = (BASE_DIR / "scanning").resolve()
-    MULTISWEEP_FLAG_FILE: Path = (BASE_DIR / "multisweep").resolve()
-    RECDIR_FILE: Path = (BASE_DIR / "recdir").resolve()
 
     # ---------------- Serial / Printer ----------------
     SERIAL_BAUD: int = int(os.environ.get("SERIAL_BAUD", 115200))
     SERIAL_TIMEOUT_S: float = float(os.environ.get("SERIAL_TIMEOUT", 1.0))
     SERIAL_PROFILE: SerialProfile = SerialProfile()
-    # If you want to hard-force a specific COM port (e.g., for lab PC), set env SERIAL_PORT.
+    # Optionally pin a COM port via env
     SERIAL_PORT: str | None = os.environ.get("SERIAL_PORT") or None
 
     # Background manager timing
@@ -120,9 +112,7 @@ class Config:
     SERIAL_READ_WINDOW_S: float = float(os.environ.get("SERIAL_READ_WINDOW", 0.5))
 
     # ---------------- DLL / Ultrasound SDK ----------------
-    # Name of the wrapper DLL shipped with the app
     US_DLL_NAME: str = os.environ.get("US_DLL_NAME", "usgfw2wrapper.dll")
-    # Path where the DICOM template lives (dcmimage.dcm in your repo)
     DICOM_TEMPLATE_NAME: str = os.environ.get("DICOM_TEMPLATE_NAME", "dcmimage.dcm")
 
     # ---------------- DICOM defaults ----------------
@@ -130,7 +120,7 @@ class Config:
     STUDY_DESC: str = os.environ.get("STUDY_DESC", "Ultrasound Volume")
     WINDOW_CENTER: int = int(os.environ.get("DICOM_WINDOW_CENTER", 0))
     WINDOW_WIDTH: int = int(os.environ.get("DICOM_WINDOW_WIDTH", 1000))
-    BITS_ALLOCATED: int = int(os.environ.get("DICOM_BITS_ALLOCATED", 16))  # imconv uses 16-bit series
+    BITS_ALLOCATED: int = int(os.environ.get("DICOM_BITS_ALLOCATED", 16))  # 16-bit series
     BITS_STORED: int = int(os.environ.get("DICOM_BITS_STORED", 16))
     HIGH_BIT: int = int(os.environ.get("DICOM_HIGH_BIT", 15))
     PHOTOMETRIC: str = os.environ.get("DICOM_PHOTOMETRIC", "MONOCHROME2")
@@ -139,15 +129,27 @@ class Config:
     RESCALE_TYPE: str = os.environ.get("DICOM_RS_TYPE", "HU")
 
     # ---------------- UI / Timings ----------------
-    # Delays used in original flows (e.g., wait before record starts)
     DELAY_BEFORE_RECORD_S: float = float(os.environ.get("DELAY_BEFORE_RECORD", 9.0))
+
+    # ---------------- Service / scan positioning (for the dynamic Insert‑Bath button) ----
+    TARGET_Z_MM: float = float(os.environ.get("TARGET_Z_MM", 100.0))
+    SCAN_POSE: dict[str, float] = {
+        "X": float(os.environ.get("SCAN_POSE_X", 53.5)),
+        "Y": float(os.environ.get("SCAN_POSE_Y", 53.5)),
+        "Z": float(os.environ.get("SCAN_POSE_Z", 10.0)),
+    }
+    Z_FEED_MM_PER_MIN: int = int(os.environ.get("Z_FEED", 1500))
+    XYZ_FEED_MM_PER_MIN: int = int(os.environ.get("XYZ_FEED", 2000))
+    POS_TOL_MM: float = float(os.environ.get("POS_TOL_MM", 0.02))
+    POLL_INTERVAL_S: float = float(os.environ.get("POLL_INTERVAL_S", 0.10))
+    POLL_TIMEOUT_S: float = float(os.environ.get("POLL_TIMEOUT_S", 5.0))
 
     # ---------------- Helpers ----------------
     @staticmethod
     def ensure_measurement_dir() -> Path:
         """
         Create and return a timestamped measurement directory under DATA/.
-        (mirrors your record.py behavior but centralized)
+        Matches your record.py behavior.
         """
         from datetime import datetime
         ts = datetime.now().strftime("%Y%m%d_%H%M%S")
@@ -166,12 +168,3 @@ class Config:
     def dicom_template_path() -> Path:
         """Resolve path to the DICOM template file (dcmimage.dcm)."""
         return resource_path(Config.DICOM_TEMPLATE_NAME)
-    
-     # Service / scan positioning
-    TARGET_Z_MM: float = 100.0
-    SCAN_POSE = {"X": 53.5, "Y": 53.5, "Z": 10.0}  # tweak to your rig
-    Z_FEED_MM_PER_MIN: int = 1500
-    XYZ_FEED_MM_PER_MIN: int = 2000
-    POS_TOL_MM: float = 0.02       # tolerance when comparing positions
-    POLL_INTERVAL_S: float = 0.10  # polling interval
-    POLL_TIMEOUT_S: float = 5.0    # max time to wait

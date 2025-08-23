@@ -1,17 +1,26 @@
 # app/main.py
 from __future__ import annotations
 
-
 import sys
 import time
 import subprocess as sp
 from pathlib import Path
 from typing import Tuple, Iterable
+
 from flask import Flask, Response, jsonify, render_template, request
 
-# -------------------------------------------------------------------
+# Optional desktop shell
+try:
+    import webview  # pip install pywebview
+    _HAS_WEBVIEW = True
+except Exception:
+    _HAS_WEBVIEW = False
+import webbrowser
+import platform
+
+# ------------------------------------------------------------------------------
 # Import handling: allow running both `python -m app.main` and `python app/main.py`
-# -------------------------------------------------------------------
+# ------------------------------------------------------------------------------
 if __package__ is None or __package__ == "":
     PROJECT_ROOT = Path(__file__).resolve().parents[1]
     if str(PROJECT_ROOT) not in sys.path:
@@ -22,109 +31,97 @@ if __package__ is None or __package__ == "":
     from app.core import ultrasound_sdk
     from app.utils.webcam import generate_frames, camera
     from app.integrations.itk_snap import open_itksnap_with_dicom_series
-    from app.core.serial_manager import start_serial                # ✅ added
-    from app.core.keyboard_control import start_keyboard_listener, enable_keyboard  # ✅ added
+    from app.core.serial_manager import (
+        start_serial,
+        send_now,
+        send_gcode,
+        wait_for_motion_complete,
+    )
+    from app.core.keyboard_control import start_keyboard_listener, enable_keyboard
 else:
     from .config import Config
     from .core import scanner_control as pssc
     from .core import ultrasound_sdk
     from .utils.webcam import generate_frames, camera
     from .integrations.itk_snap import open_itksnap_with_dicom_series
-    from .core.serial_manager import start_serial, send_now, send_gcode                   # ✅ added
-    from .core.keyboard_control import start_keyboard_listener, enable_keyboard  # ✅ added
-
-
+    from .core.serial_manager import (
+        start_serial,
+        send_now,
+        send_gcode,
+        wait_for_motion_complete,
+    )
+    from .core.keyboard_control import start_keyboard_listener, enable_keyboard
 
 # ------------------------------------------------------------------------------
 # Force all paths to use the single, root-level static/ and templates/
 # ------------------------------------------------------------------------------
-
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 STATIC_FOLDER = (PROJECT_ROOT / "static").resolve()
 TEMPLATE_FOLDER = (PROJECT_ROOT / "templates").resolve()
 
-# IMPORTANT: override Config paths so every module/script uses the SAME static/
-# (prevents creation of app/static)
 Config.BASE_DIR = PROJECT_ROOT
-Config.APP_DIR = (PROJECT_ROOT ).resolve()
+Config.APP_DIR = PROJECT_ROOT.resolve()
 Config.STATIC_DIR = STATIC_FOLDER
 Config.TEMPLATES_DIR = TEMPLATE_FOLDER
 Config.DATA_DIR = (STATIC_FOLDER / "data").resolve()
-# Config.FRAMES_DIR = (Config.DATA_DIR / "frames").resolve()
-# Config.RAWS_DIR = (Config.DATA_DIR / "raws").resolve()
-# Config.DICOM_DIR = (Config.DATA_DIR / "dicom").resolve()
-# Config.LOGS_DIR = (Config.DATA_DIR / "logs").resolve()
-
-# Ensure data dirs exist at the *root-level* static/
-# for p in (Config.DATA_DIR, Config.FRAMES_DIR, Config.RAWS_DIR, Config.DICOM_DIR, Config.LOGS_DIR):
-#     p.mkdir(parents=True, exist_ok=True)
 
 # ------------------------------------------------------------------------------
-# Flask app setup (serve from root-level static/ and templates/)
+# Flask app
 # ------------------------------------------------------------------------------
-# Flask app setup ...
 app = Flask(__name__, static_folder=str(STATIC_FOLDER), template_folder=str(TEMPLATE_FOLDER))
 app.config.from_object(Config)
 
-
-# Start shared serial threads
+# ------------------------------------------------------------------------------
+# Background services: serial + keyboard (best‑effort)
+# ------------------------------------------------------------------------------
 try:
     start_serial()
 except Exception as e:
     print(f"[Serial] background start failed: {e}")
 
-# Start keyboard control (non-blocking)
 try:
     enable_keyboard(True)
     start_keyboard_listener()
 except Exception as e:
     print(f"[Keyboard] listener not started: {e}")
 
-
-
-
 # ------------------------------------------------------------------------------
-# Ultrasound live stream bootstrap (don’t crash if DLL/probe missing)
+# Ultrasound live stream bootstrap (resilient if probe/DLL missing)
 # ------------------------------------------------------------------------------
-
 def _init_ultrasound() -> Tuple[int, int, Tuple[float, float]]:
-    """Initialize ultrasound once; fall back to config dimensions if it fails."""
     try:
         w, h, res = ultrasound_sdk.initialize_ultrasound()
         print(f"[startup] Ultrasound ready: {w}x{h}, res={res}")
         return w, h, res
     except Exception as e:
         print(f"[startup] Ultrasound init warning: {e}")
-        return (Config.ULTRA_W if hasattr(Config, "ULTRA_W") else Config.ULTRASOUND_WIDTH,
-                Config.ULTRA_H if hasattr(Config, "ULTRA_H") else Config.ULTRASOUND_HEIGHT,
-                (0.0, 0.0))
+        return (1024, 1024, (0.0, 0.0))
 
 _UL_W, _UL_H, _UL_RES = _init_ultrasound()
 
-
 def _ultrasound_mjpeg_stream() -> Iterable[bytes]:
-    """Stream JPEG frames; supports both new/legacy generator signatures."""
     try:
-        gen = ultrasound_sdk.generate_image()  # type: ignore
-    except TypeError:
-        gen = ultrasound_sdk.generate_image(_UL_W, _UL_H, _UL_RES)
-
-    for frame in gen:
-        yield (b"--frame\r\n"
-               b"Content-Type: image/jpeg\r\n\r\n" + frame + b"\r\n\r\n")
-
+        try:
+            gen = ultrasound_sdk.generate_image()  # type: ignore
+        except TypeError:
+            gen = ultrasound_sdk.generate_image(_UL_W, _UL_H, _UL_RES)
+        for frame in gen:
+            yield (
+                b"--frame\r\n"
+                b"Content-Type: image/jpeg\r\n\r\n" + frame + b"\r\n\r\n"
+            )
+    except Exception as e:
+        print(f"[ultrasound stream] stopped: {e}")
+        return
 
 # ------------------------------------------------------------------------------
-# Convenience: flag files + helpers (exe-safe)
+# Flag helpers
 # ------------------------------------------------------------------------------
-
 def _flag_paths():
-    """Return paths for flag files (scanning, multisweep, recdir)."""
     scan_f = getattr(Config, "SCANNING_FLAG_FILE", PROJECT_ROOT / "scanning")
     multi_f = getattr(Config, "MULTISWEEP_FLAG_FILE", PROJECT_ROOT / "multisweep")
     recdir_f = getattr(Config, "RECDIR_FILE", PROJECT_ROOT / "recdir")
     return Path(scan_f), Path(multi_f), Path(recdir_f)
-
 
 def _set_flag(path: Path, value: str) -> None:
     try:
@@ -132,108 +129,113 @@ def _set_flag(path: Path, value: str) -> None:
     except Exception as e:
         print(f"[flags] failed writing {path}: {e}")
 
-
 def _newest_data_folder_name() -> str:
-    """Return newest timestamp folder name under DATA_DIR (as string)."""
     subdirs = [p for p in Config.DATA_DIR.iterdir() if p.is_dir()]
     if not subdirs:
         return ""
     return sorted(subdirs, key=lambda p: p.name)[-1].name
 
 # ------------------------------------------------------------------------------
-# insert water bath
+# Insert Bath / Position‑for‑Scan (Config‑driven with defaults)
 # ------------------------------------------------------------------------------
-def _wait_until_axis(axis: str, target: float,
-                     tol: float = Config.POS_TOL_MM,
-                     timeout_s: float = Config.POLL_TIMEOUT_S) -> bool:
-    import time
+def _wait_until_axis(
+    axis: str,
+    target: float,
+    tol: float = getattr(Config, "POS_TOL_MM", 0.02),
+    timeout_s: float = getattr(Config, "POLL_TIMEOUT_S", 5.0),
+) -> bool:
     t0 = time.time()
+    poll = getattr(Config, "POLL_INTERVAL_S", 0.10)
     while (time.time() - t0) <= timeout_s:
         pos = pssc.get_position_axis(axis)
         if pos is not None and abs(pos - target) <= tol:
             return True
-        time.sleep(Config.POLL_INTERVAL_S)
+        time.sleep(poll)
     return False
-
 
 @app.route("/api/lower-plate", methods=["POST"])
 def api_lower_plate():
     try:
+        target_z = float(getattr(Config, "TARGET_Z_MM", 100.0))
+        z_feed = int(getattr(Config, "Z_FEED_MM_PER_MIN", 1500))
+
         send_now("G90")
-        send_now(f"G1 Z{Config.TARGET_Z_MM:.3f} F{Config.Z_FEED_MM_PER_MIN}")
+        send_now(f"G1 Z{target_z:.3f} F{z_feed}")
         wait_for_motion_complete(10.0)
 
-        if not _wait_until_axis("Z", Config.TARGET_Z_MM):
-            return jsonify(success=False,
-                           message=f"Timeout: Z did not reach {Config.TARGET_Z_MM} mm",
-                           status="Error"), 500
+        if not _wait_until_axis("Z", target_z):
+            return jsonify(
+                success=False,
+                message=f"Timeout: Z did not reach {target_z} mm",
+                status="Error",
+            ), 500
 
-        return jsonify(success=True,
-                       message="Plate lowered to insert bath",
-                       status="Place specimen and click again")
+        return jsonify(
+            success=True,
+            message="Plate lowered to insert bath",
+            status="Place specimen and click again",
+        )
     except Exception as e:
         return jsonify(success=False, message=str(e), status="Error"), 500
-
 
 @app.route("/api/position-for-scan", methods=["POST"])
 def api_position_for_scan():
     try:
+        pose = getattr(Config, "SCAN_POSE", {"X": 53.5, "Y": 53.5, "Z": 10.0})
+        xyz_feed = int(getattr(Config, "XYZ_FEED_MM_PER_MIN", 2000))
+
         send_now("G90")
-        send_now(f"G1 X{Config.SCAN_POSE['X']:.3f} "
-                 f"Y{Config.SCAN_POSE['Y']:.3f} "
-                 f"Z{Config.SCAN_POSE['Z']:.3f} "
-                 f"F{Config.XYZ_FEED_MM_PER_MIN}")
+        send_now(
+            f"G1 X{float(pose['X']):.3f} "
+            f"Y{float(pose['Y']):.3f} "
+            f"Z{float(pose['Z']):.3f} "
+            f"F{xyz_feed}"
+        )
         wait_for_motion_complete(15.0)
 
-        ok_x = _wait_until_axis("X", Config.SCAN_POSE["X"])
-        ok_y = _wait_until_axis("Y", Config.SCAN_POSE["Y"])
-        ok_z = _wait_until_axis("Z", Config.SCAN_POSE["Z"])
+        ok_x = _wait_until_axis("X", float(pose["X"]))
+        ok_y = _wait_until_axis("Y", float(pose["Y"]))
+        ok_z = _wait_until_axis("Z", float(pose["Z"]))
 
         if not (ok_x and ok_y and ok_z):
-            return jsonify(success=False,
-                           message="Timeout: scanner did not reach scan pose",
-                           status="Error"), 500
+            return jsonify(
+                success=False,
+                message="Timeout: scanner did not reach scan pose",
+                status="Error",
+            ), 500
 
-        return jsonify(success=True,
-                       message="Scanner positioned for scan",
-                       status="Ready")
+        return jsonify(success=True, message="Scanner positioned for scan", status="Ready")
     except Exception as e:
         return jsonify(success=False, message=str(e), status="Error"), 500
 
 # ------------------------------------------------------------------------------
-# Routes
+# Routes (original)
 # ------------------------------------------------------------------------------
-
 @app.route("/")
 def index():
     return render_template("main.html")
 
-
 @app.route("/ultrasound_video_feed")
 def ultrasound_video_feed():
-    return Response(_ultrasound_mjpeg_stream(),
-                    mimetype="multipart/x-mixed-replace; boundary=frame")
-
+    return Response(
+        _ultrasound_mjpeg_stream(),
+        mimetype="multipart/x-mixed-replace; boundary=frame",
+    )
 
 @app.route("/video_feed")
 def video_feed():
-    return Response(generate_frames(camera),
-                    mimetype="multipart/x-mixed-replace; boundary=frame")
-
+    return Response(
+        generate_frames(camera),
+        mimetype="multipart/x-mixed-replace; boundary=frame",
+    )
 
 @app.route("/open-itksnap", methods=["POST"])
 def handle_open_itksnap():
     success, message = open_itksnap_with_dicom_series()
     return jsonify(success=success, message=message)
 
-
 @app.route("/move_probe", methods=["POST"])
 def move_probe():
-    """
-    Unified movement endpoint. Accepts JSON:
-    { "direction": "<Xplus|Xminus|Yplus|Yminus|Zplus|Zminus|rotateClockwise|rotateCounterclockwise>",
-      "step": <float> }
-    """
     direction = request.json.get("direction")
     step = float(request.json.get("step", 1))
 
@@ -257,38 +259,24 @@ def move_probe():
     except Exception as e:
         return jsonify(success=False, message=str(e)), 500
 
-
 @app.route("/initscanner")
 def initscanner():
-    """Home axes, move to INIT, set feedrate, restore current E position."""
     try:
         ok, msg = pssc.go2INIT()
-        if isinstance(ok, tuple):  # handle any legacy returns
+        if isinstance(ok, tuple):
             ok, msg = ok
         return jsonify(success=bool(ok), message=msg or "Initialized")
     except Exception as e:
         return jsonify(success=False, message=str(e)), 500
 
-
 def _start_scan(multi: bool):
-    """
-    Orchestrate a scan:
-      - set flags
-      - move to StartScan
-      - spawn record.py in background
-      - wait a small delay
-      - move across ScanPath
-      - render scanning page
-    """
     scanning_f, multisweep_f, _ = _flag_paths()
     _set_flag(scanning_f, "1")
     _set_flag(multisweep_f, "1" if multi else "0")
 
-    # Move to the start of scan (safe speed)
     pssc.go2StartScan()
     time.sleep(4)
 
-    # Spawn recorder from project root, pass multi flag
     rec_path = (Config.APP_DIR / "scripts" / "record.py").resolve()
     python_exe = getattr(Config, "PYTHON_EXE", sys.executable)
     try:
@@ -296,37 +284,79 @@ def _start_scan(multi: bool):
     except Exception as e:
         print(f"[scan] failed to spawn recorder: {e}")
 
-    # Let the recorder warm up, then perform the scan path
     delay_s = int(getattr(Config, "DELAY_BEFORE_RECORD_S", 9))
     time.sleep(delay_s)
     pssc.ScanPath()
 
     newest = _newest_data_folder_name()
-    return render_template("scanning.html",
-                           link2files=str(Config.DATA_DIR / newest),
-                           linkshort=newest)
-
+    return render_template(
+        "scanning.html",
+        link2files=str(Config.DATA_DIR / newest),
+        linkshort=newest,
+    )
 
 @app.route("/scanpath")
 def scanpath():
     return _start_scan(multi=False)
 
-
 @app.route("/multipath")
 def multipath():
     return _start_scan(multi=True)
 
-
 @app.route("/overViewImage", methods=["POST"])
 def overview_image():
-    # Stub endpoint for overview action; actual image is generated by postprocessing
     return jsonify(success=True, message="Overview requested")
 
+# ------------------------------------------------------------------------------
+# Desktop launcher (pywebview) + fallback to browser
+# ------------------------------------------------------------------------------
+def _launch_desktop():
+    """
+    Launch a native desktop window that hosts the Flask UI.
+    """
+    url = "http://127.0.0.1:5000"
+    if _HAS_WEBVIEW:
+        window = webview.create_window(
+            title="3SONIC Scanner",
+            url=url,
+            width=380,
+            height=680,
+            resizable=True,
+            min_size=(360, 620),
+        )
+
+        # Optional: small Windows dark‑titlebar tweak
+        if platform.system() == "Windows":
+            try:
+                import ctypes
+                time.sleep(0.4)
+                hwnd = ctypes.windll.user32.FindWindowW(None, "3SONIC 3D Ultrasound app")
+                if hwnd:
+                    enabled = ctypes.c_int(1)
+                    for attr in (19, 20):  # DWMWA_USE_IMMERSIVE_DARK_MODE (varies by Windows)
+                        ctypes.windll.dwmapi.DwmSetWindowAttribute(
+                            ctypes.c_void_p(hwnd),
+                            ctypes.c_uint(attr),
+                            ctypes.byref(enabled),
+                            ctypes.sizeof(enabled),
+                        )
+            except Exception:
+                pass
+
+        webview.start()
+    else:
+        print("[Desktop] pywebview not installed. Opening browser instead.")
+        webbrowser.open(url)
 
 # ------------------------------------------------------------------------------
 # Entrypoint
 # ------------------------------------------------------------------------------
-
 if __name__ == "__main__":
-    # no auto-reloader so DLL/serial init happens once
-    app.run(host="0.0.0.0", port=5000, debug=True, use_reloader=False)
+    # Start Flask in a background thread that pywebview can attach to
+    from threading import Thread
+
+    def _run_flask():
+        app.run(host="127.0.0.1", port=5000, debug=True, use_reloader=False)
+
+    Thread(target=_run_flask, daemon=True).start()
+    _launch_desktop()

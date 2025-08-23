@@ -7,9 +7,10 @@
 
   <!-- Icons -->
   <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css"/>
-
-  <!-- App styles -->
   <link rel="stylesheet" href="{{ url_for('static', filename='css/app.css') }}">
+  <!-- Google Fonts: Montserrat Light -->
+   <link href="https://fonts.googleapis.com/css2?family=Montserrat:wght@300&display=swap" rel="stylesheet">
+
 </head>
 <body>
 <header>
@@ -32,26 +33,21 @@
   </nav>
 </header>
 
-<!-- scanning modal -->
-<div id="scanInProgress" class="modal" style="display:none;">
-  <div class="modal-content">
-    <p>Scanning in progress... Please do not press any buttons.</p>
-  </div>
-</div>
-
 <main>
-  <!-- Left panel: scanner controls -->
+  <!-- Left panel -->
   <section class="scanner-controls">
     <div class="scan-buttons">
-      <button class="button start-scan-button" data-action="scan">
-        <i class="fas fa-play-circle"></i> Start Scan
+      <button class="button axis-style start-scan-button" data-action="scan">
+      <i class="fas fa-play-circle"></i> Start Scan
       </button>
-      <button class="button multi-path-button" data-action="multipath">
-        <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 50 30" fill="currentColor" style="vertical-align: middle;">
-          <polygon points="0,0 20,15 0,30"></polygon>
-          <polygon points="20,0 40,15 20,30"></polygon>
-        </svg>
-        Dual Sweep
+
+      <button class="button axis-style multi-path-button" data-action="multipath">
+      <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20"
+         viewBox="0 0 50 30" fill="currentColor" style="vertical-align: middle;">
+        <polygon points="0,0 20,15 0,30"></polygon>
+        <polygon points="20,0 40,15 20,30"></polygon>
+      </svg>
+      Dual Sweep
       </button>
     </div>
 
@@ -64,53 +60,31 @@
 
     <div class="manual-adjustments">
       <h2>Manual Adjustments</h2>
-
-      <!-- D-Pad for X/Y -->
+      <!-- D-Pad -->
       <div class="dpad">
-        <!-- row 1 -->
         <span></span>
-        <button class="button dpad-btn dpad-up" data-action="y-minus" aria-label="Y- (Up)">
-          <i class="fas fa-caret-up"></i>
-        </button>
+        <button class="button dpad-btn dpad-up" data-action="y-minus"><i class="fas fa-caret-up"></i></button>
         <span></span>
 
-        <!-- row 2 -->
-        <button class="button dpad-btn dpad-left" data-action="x-minus" aria-label="X- (Left)">
-          <i class="fas fa-caret-left"></i>
-        </button>
+        <button class="button dpad-btn dpad-left" data-action="x-minus"><i class="fas fa-caret-left"></i></button>
+        <button class="button special" id="lower-plate-btn"><i class="fas fa-water"></i> Insert Bath</button>
+        <button class="button dpad-btn dpad-right" data-action="x-plus"><i class="fas fa-caret-right"></i></button>
 
-        <!-- center placeholder -->
-        <button class="button special" id="lower-plate-btn">
-          <i class="fas fa-water"></i>
-          <span>Insert Bath</span>
-        </button>
-
-        <button class="button dpad-btn dpad-right" data-action="x-plus" aria-label="X+ (Right)">
-          <i class="fas fa-caret-right"></i>
-        </button>
-
-        <!-- row 3 -->
         <span></span>
-        <button class="button dpad-btn dpad-down" data-action="y-plus" aria-label="Y+ (Down)">
-          <i class="fas fa-caret-down"></i>
-        </button>
+        <button class="button dpad-btn dpad-down" data-action="y-plus"><i class="fas fa-caret-down"></i></button>
         <span></span>
       </div>
 
-      <!-- Z row under the D-Pad -->
+      <!-- Z row -->
       <div class="z-row">
-        <button class="button z-btn" data-action="z-plus">
-          <i class="fas fa-arrow-up"></i> Z
-        </button>
-        <button class="button z-btn" data-action="z-minus">
-          Z <i class="fas fa-arrow-down"></i>
-        </button>
+        <button class="button z-btn" data-action="z-plus"><i class="fas fa-arrow-up"></i> Z</button>
+        <button class="button z-btn" data-action="z-minus">Z <i class="fas fa-arrow-down"></i></button>
       </div>
 
-      <!-- Rotation -->
-      <div class="adjustment-group">
+      <!-- Rotation row -->
+      <div class="rotation-row">
         <button class="button" data-action="rot-cw"><i class="fas fa-redo"></i> CW</button>
-        <button class="button" data-action="rot-ccw">CCW <i class="fas fa-undo"></i></button>
+        <button class="button" data-action="rot-ccw"><i class="fas fa-undo"></i> CCW</button>
       </div>
     </div>
 
@@ -131,17 +105,13 @@
           <option value="10">10 mm</option>
         </optgroup>
       </select>
-      <!-- Optional display: <span id="step-display" class="step-display">1 mm</span> -->
     </div>
   </section>
 
-  <!-- Center panel: display -->
+  <!-- Center panel -->
   <section class="scanner-display">
     <div class="card">
-      <div class="card-header">
-        <i class="fas fa-image"></i>
-        <span id="display-title">Ultrasound View</span>
-      </div>
+      <div class="card-header"><i class="fas fa-image"></i> <span id="display-title">Ultrasound View</span></div>
       <div class="card-image">
         <img id="im1" src="{{ url_for('ultrasound_video_feed') }}" alt="Ultrasound" class="dispimg_us" />
         <img id="im2" src="{{ url_for('video_feed') }}" alt="Webcam" class="dispimg_us" style="display:none;" />
@@ -149,34 +119,23 @@
     </div>
   </section>
 
-  <!-- Right panel: rendering -->
+  <!-- Right panel -->
   <section class="rendering-controls">
     <h2>Rendering</h2>
     <div class="adjustment-group">
-      <button class="button" data-action="open-itk">
-        <i class="fas fa-external-link-alt"></i> Open in ITK-Snap
-      </button>
+      <button class="button" data-action="open-itk"><i class="fas fa-external-link-alt"></i> Open in ITK-Snap</button>
     </div>
     <div class="adjustment-group">
-      <button class="button" data-action="overview">
-        <i class="fas fa-camera"></i> Overview Image
-      </button>
+      <button class="button" data-action="overview"><i class="fas fa-camera"></i> Overview Image</button>
     </div>
   </section>
 </main>
 
 <footer>
-  <div>
-    <p>Support: fatemeh.makouei@regionh.dk | +45 50243760</p>
-  </div>
-  <div>
-    <a href="https://www.surgic.dk/" target="_blank" rel="noopener">
-      <img src="{{ url_for('static', filename='images/surgic.png') }}" alt="Company Logo" style="width:40px;height:40px;filter:brightness(1.2)" />
-    </a>
-  </div>
+  <div><p>Support: fatemeh.makouei@3sonic.com| +45 50243760</p></div>
+  <div><button class="button exit-button" data-action="exit"><i class="fas fa-sign-out-alt"></i> Exit</button></div>
 </footer>
 
-<!-- App script -->
 <script src="{{ url_for('static', filename='app.js') }}"></script>
 </body>
 </html>
