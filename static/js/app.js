@@ -1,10 +1,10 @@
 /* ==========================================================================
-   3SONIC – Frontend Controller (lean, no popups)
+   3SONIC – Frontend Controller (modern, quiet UI)
    - Works with your Flask routes in main.py
-   - Debounced move commands so the controller isn’t flooded
-   - Insert Bath button toggles between lower and position-for-scan
-   - Ultrasound stream auto-reloads on error and on a timer
-   - Exit button confirms and calls /api/exit
+   - Debounced jog commands (prevents flooding the controller)
+   - Insert Bath button toggles lower / position-for-scan
+   - Ultrasound stream: status overlay + smart auto-reload
+   - Exit button: confirm → POST /api/exit → window closes
    ========================================================================== */
 
 (() => {
@@ -13,12 +13,13 @@
     init: "/initscanner",
     scan: "/scanpath",
     multipath: "/multipath",
-    move: "/move_probe",                 // expects { direction, step }
+    move: "/move_probe",                  // expects { direction, step }
     openITK: "/open-itksnap",
     overview: "/overViewImage",
-    lowerPlate: "/api/lower-plate",      // POST
-    posForScan: "/api/position-for-scan",// POST
-    exit: "/api/exit",                   // POST
+    lowerPlate: "/api/lower-plate",       // POST
+    posForScan: "/api/position-for-scan", // POST
+    exit: "/api/exit",                    // POST
+    usStream: "/ultrasound_video_feed",
   };
 
   const SELECTORS = {
@@ -33,8 +34,14 @@
   // ------------------------------ Helpers ----------------------------------
   const $ = (sel, root = document) => root.querySelector(sel);
   const $$ = (sel, root = document) => Array.from(root.querySelectorAll(sel));
+
   const toggle = (el, show) => { if (el) el.style.display = show ? "block" : "none"; };
-  const setBusy = (el, busy = true) => { if (!el) return; el.toggleAttribute("disabled", !!busy); el.classList.toggle("is-loading", !!busy); };
+
+  const setBusy = (el, busy = true) => {
+    if (!el) return;
+    el.toggleAttribute("disabled", !!busy);
+    el.classList.toggle("is-loading", !!busy);
+  };
 
   function debounce(fn, wait = 120) {
     let t;
@@ -44,7 +51,8 @@
   async function apiGet(url) {
     const res = await fetch(url, { method: "GET" });
     if (!res.ok) throw new Error(`${res.status} ${res.statusText}`);
-    return res.text(); // we only log results; content not used
+    // most of our GETs are HTML responses; we don't consume them
+    return res.text();
   }
 
   async function apiPostJSON(url, data = {}) {
@@ -64,12 +72,12 @@
 
   // ------------------------------ State ------------------------------------
   const state = {
+    insertBathStage: 0, // 0 = Insert Bath -> lower; 1 = Raise Plate to Scan -> position
     get step() {
       const el = $(SELECTORS.stepSelect);
       const v = parseFloat(el?.value || "1");
       return Number.isFinite(v) ? v : 1;
     },
-    insertBathStage: 0, // 0 = Insert Bath -> lower; 1 = Raise Plate to Scan -> position
   };
 
   // --------------------------- Actions (API) --------------------------------
@@ -130,8 +138,8 @@
   async function overviewImage(btn) {
     setBusy(btn, true);
     try {
-      await apiPostJSON(ENDPOINTS.overview, {});
-      console.log("[overview] opened");
+      await apiPostJSON(ENDPOINTS.overview);
+      console.log("[overview] requested");
     } catch (e) {
       console.error("[overview] error:", e.message);
     } finally {
@@ -140,31 +148,21 @@
   }
 
   async function exitApp(btn) {
-    // explicit confirmation requested
     if (!confirm("Exit the app now? This will close the scanner connection and window.")) return;
     setBusy(btn, true);
-    const originalHTML = btn.innerHTML;
+    const original = btn.innerHTML;
     try {
       btn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Exiting...';
       await fetch(ENDPOINTS.exit, { method: "POST" });
-
-      // PyWebView will close the window shortly after the backend handles exit.
-      // If running in a normal browser fallback, try to close/blank.
-      setTimeout(() => {
-        try { window.close(); } catch {}
-        try { window.location.href = "about:blank"; } catch {}
-      }, 250);
+      // If running in a browser (not pywebview), try to close/blank
+      setTimeout(() => { try { window.close(); } catch {} try { window.location.href = "about:blank"; } catch {} }, 250);
     } catch (e) {
       console.error("[exit] error:", e.message);
-      // If backend didn't terminate, restore button after a moment.
-      setTimeout(() => {
-        btn.innerHTML = originalHTML;
-        setBusy(btn, false);
-      }, 1200);
+      setTimeout(() => { btn.innerHTML = original; setBusy(btn, false); }, 1100);
     }
   }
 
-  // Movement & rotation (debounced)
+  // ----------------------------- Jog / Rotate -------------------------------
   const sendMove = debounce(async (direction, step) => {
     try {
       const res = await apiPostJSON(ENDPOINTS.move, { direction, step });
@@ -174,22 +172,14 @@
     }
   }, 80);
 
-  const rotateCW = debounce(async (step) => {
-    try {
-      const res = await apiPostJSON(ENDPOINTS.move, { direction: "rotateClockwise", step });
-      console.log("[rotate] CW", res);
-    } catch (e) {
-      console.error("[rotate] CW error:", e.message);
-    }
+  const rotateCW  = debounce(async (step) => {
+    try { await apiPostJSON(ENDPOINTS.move, { direction: "rotateClockwise", step }); }
+    catch (e) { console.error("[rotate] CW error:", e.message); }
   }, 120);
 
   const rotateCCW = debounce(async (step) => {
-    try {
-      const res = await apiPostJSON(ENDPOINTS.move, { direction: "rotateCounterclockwise", step });
-      console.log("[rotate] CCW", res);
-    } catch (e) {
-      console.error("[rotate] CCW error:", e.message);
-    }
+    try { await apiPostJSON(ENDPOINTS.move, { direction: "rotateCounterclockwise", step }); }
+    catch (e) { console.error("[rotate] CCW error:", e.message); }
   }, 120);
 
   // ---------------------- Insert Bath / Scan Toggle -------------------------
@@ -208,18 +198,17 @@
         setBusy(btn, true);
         if (state.insertBathStage === 0) {
           console.log("[bath] lower plate…");
-          await apiPostJSON(ENDPOINTS.lowerPlate, {});
+          await apiPostJSON(ENDPOINTS.lowerPlate);
           setBtnLabel("Raise Plate to Scan");
           state.insertBathStage = 1;
         } else {
           console.log("[bath] position for scan…");
-          await apiPostJSON(ENDPOINTS.posForScan, {});
+          await apiPostJSON(ENDPOINTS.posForScan);
           setBtnLabel("Insert Bath");
           state.insertBathStage = 0;
         }
       } catch (e) {
         console.error("[bath] error:", e.message);
-        // Reset UI so user can retry cleanly
         setBtnLabel("Insert Bath");
         state.insertBathStage = 0;
       } finally {
@@ -228,7 +217,6 @@
     }
 
     btn.addEventListener("click", handleLowerPlate);
-    // initial label (defensive)
     setBtnLabel(state.insertBathStage === 0 ? "Insert Bath" : "Raise Plate to Scan");
   }
 
@@ -244,18 +232,18 @@
           case "open-itk": return openITKSnap(btn);
           case "overview": return overviewImage(btn);
 
-          case "x-plus": return sendMove("Xplus", state.step);
+          case "x-plus": return sendMove("Xplus",  state.step);
           case "x-minus": return sendMove("Xminus", state.step);
-          case "y-plus": return sendMove("Yplus", state.step);
+          case "y-plus": return sendMove("Yplus",  state.step);
           case "y-minus": return sendMove("Yminus", state.step);
-          case "z-plus": return sendMove("Zplus", state.step);
+          case "z-plus": return sendMove("Zplus",  state.step);
           case "z-minus": return sendMove("Zminus", state.step);
 
-          case "rot-cw": return rotateCW(state.step);
+          case "rot-cw":  return rotateCW(state.step);
           case "rot-ccw": return rotateCCW(state.step);
 
           case "show-ultrasound": return showUltrasound();
-          case "show-webcam": return showWebcam();
+          case "show-webcam":     return showWebcam();
 
           case "exit": return exitApp(btn);
         }
@@ -263,20 +251,20 @@
     });
   }
 
-  // Keyboard shortcuts
+  // --------------------------- Keyboard ------------------------------------
   function bindKeyboard() {
     const map = new Map([
-      ["ArrowLeft", () => sendMove("Xminus", state.step)],
-      ["ArrowRight", () => sendMove("Xplus", state.step)],
-      ["ArrowUp", () => sendMove("Yminus", state.step)],
-      ["ArrowDown", () => sendMove("Yplus", state.step)],
-      ["PageUp", () => sendMove("Zplus", state.step)],
-      ["PageDown", () => sendMove("Zminus", state.step)],
+      ["ArrowLeft",  () => sendMove("Xminus", state.step)],
+      ["ArrowRight", () => sendMove("Xplus",  state.step)],
+      ["ArrowUp",    () => sendMove("Yminus", state.step)],
+      ["ArrowDown",  () => sendMove("Yplus",  state.step)],
+      ["PageUp",     () => sendMove("Zplus",  state.step)],
+      ["PageDown",   () => sendMove("Zminus", state.step)],
 
       ["a", () => sendMove("Xminus", state.step)],
-      ["d", () => sendMove("Xplus", state.step)],
+      ["d", () => sendMove("Xplus",  state.step)],
       ["w", () => sendMove("Yminus", state.step)],
-      ["s", () => sendMove("Yplus", state.step)],
+      ["s", () => sendMove("Yplus",  state.step)],
 
       ["r", () => rotateCW(state.step)],
       ["f", () => rotateCCW(state.step)],
@@ -315,7 +303,7 @@
     el.dispatchEvent(new Event("change"));
   }
 
-  // Streams
+  // ----------------------------- Streams -----------------------------------
   function showUltrasound() {
     const us = $(SELECTORS.ultrasoundImg);
     const cam = $(SELECTORS.webcamImg);
@@ -323,6 +311,7 @@
     us.style.display = "";
     cam.style.display = "none";
   }
+
   function showWebcam() {
     const us = $(SELECTORS.ultrasoundImg);
     const cam = $(SELECTORS.webcamImg);
@@ -331,28 +320,86 @@
     us.style.display = "none";
   }
 
-  // Ultrasound auto-reload (handles USB disconnects / dead sockets)
+  // Ultrasound status overlay (created dynamically)
+  function ensureStreamOverlay(imgEl) {
+    if (!imgEl) return { card: null, overlay: null };
+    // If already wrapped, return existing
+    if (imgEl.parentElement?.classList.contains("stream-wrap")) {
+      const overlay = imgEl.parentElement.querySelector(".status-overlay");
+      const card = overlay?.querySelector(".status-card");
+      return { card, overlay };
+    }
+
+    const wrap = document.createElement("div");
+    wrap.className = "stream-wrap";
+    imgEl.replaceWith(wrap);
+    wrap.appendChild(imgEl);
+
+    const overlay = document.createElement("div");
+    overlay.className = "status-overlay hidden";
+    overlay.innerHTML = `
+      <div class="status-card">
+        <div class="spinner" aria-hidden="true"></div>
+        <div class="title">Ultrasound: reconnecting…</div>
+        <div class="subtitle">If the probe was unplugged, it will attempt to recover automatically.</div>
+      </div>
+    `;
+    wrap.appendChild(overlay);
+
+    return { card: overlay.querySelector(".status-card"), overlay };
+  }
+
+  // Ultrasound auto-reload + overlay feedback
   function bindUltrasoundAutoReload() {
     const us = $(SELECTORS.ultrasoundImg);
     if (!us) return;
 
-    let lastReload = 0;
-    const MIN_RELOAD_MS = 1500;
+    const { overlay } = ensureStreamOverlay(us);
 
-    const reload = () => {
+    let lastReload = 0;
+    let backoffIdx = 0;
+    const MIN_RELOAD_MS = 1500;
+    const BACKOFF_STEPS = [1500, 2500, 4000, 6000, 10000]; // progressive retry
+
+    const showOverlay = () => { overlay && overlay.classList.remove("hidden"); };
+    const hideOverlay = () => { overlay && overlay.classList.add("hidden"); };
+
+    const reload = (force = false) => {
       const now = Date.now();
-      if (now - lastReload < MIN_RELOAD_MS) return; // throttle
+      if (!force && now - lastReload < MIN_RELOAD_MS) return;
+
       lastReload = now;
-      const base = "/ultrasound_video_feed";
-      us.src = base + "?ts=" + now;
-      console.log("[ultrasound] reloaded");
+      const url = `${ENDPOINTS.usStream}?ts=${now}`;
+      us.src = url;
+      console.log("[ultrasound] reload →", url);
     };
 
-    us.addEventListener("error", reload);           // reload if the stream errors
-    document.addEventListener("visibilitychange", () => {
-      if (document.visibilityState === "visible") reload();
+    // When the stream connection is established (img 'load'), hide overlay and reset backoff
+    us.addEventListener("load", () => {
+      backoffIdx = 0;
+      hideOverlay();
+      console.log("[ultrasound] connected");
     });
-    setInterval(reload, 60000);                     // periodic nudge
+
+    // On error: show overlay and retry with backoff
+    us.addEventListener("error", () => {
+      showOverlay();
+      const delay = BACKOFF_STEPS[Math.min(backoffIdx, BACKOFF_STEPS.length - 1)];
+      backoffIdx = Math.min(backoffIdx + 1, BACKOFF_STEPS.length - 1);
+      setTimeout(() => reload(true), delay);
+      console.warn("[ultrasound] stream error; retry in", delay, "ms");
+    });
+
+    // Visibility return: try a quick reload
+    document.addEventListener("visibilitychange", () => {
+      if (document.visibilityState === "visible") reload(true);
+    });
+
+    // Periodic keep-alive nudges
+    setInterval(() => reload(true), 60000);
+
+    // First connection
+    reload(true);
   }
 
   // ----------------------------- Init ---------------------------------------
@@ -363,7 +410,7 @@
     bindInsertBath();
     showUltrasound(); // default visible
 
-    // optional: style step select for large steps
+    // Step select: flag risky large steps
     const stepEl = $(SELECTORS.stepSelect);
     if (stepEl) {
       const apply = () => stepEl.classList.toggle("danger-step", parseFloat(stepEl.value || "1") >= 5);
@@ -374,7 +421,7 @@
 
   document.addEventListener("DOMContentLoaded", init);
 
-  // ----------------------- Minimal Styles (spinner) --------------------------
+  // ----------------------- Minimal inline styles ----------------------------
   const style = document.createElement("style");
   style.textContent = `
     .is-loading { position: relative; pointer-events: none; opacity: .7; }

@@ -407,7 +407,422 @@ body::after {
   width: 10px;
 }
 
-::-webkit-scrollbar-track {
+::-webkit-scrollbar-track {/* ==========================================================================
+   3SONIC – Modern Nordic Dark Theme
+   - Clean typography (Montserrat Light)
+   - Glass cards, unified buttons, compact footer
+   - Stream status overlay + global loading spinner
+   - Accessible focus states & responsive layout
+   ========================================================================== */
+
+/* ------------------------------ Reset ------------------------------------ */
+*, *::before, *::after { box-sizing: border-box; }
+html, body { height: 100%; }
+html { -webkit-text-size-adjust: 100%; text-size-adjust: 100%; }
+body { margin: 0; }
+
+/* --------------------------- Theme Tokens --------------------------------- */
+:root{
+  /* Palette — Nordic-inspired */
+  --midnight-blue: #2E3440;   /* base background */
+  --deep-fjord:    #3B4252;   /* surfaces */
+  --arctic-dawn:   #434C5E;   /* raised surfaces */
+  --snow-shadow:   #4C566A;   /* borders / hovers */
+
+  --nordic-frost:  #8FBCBB;   /* accent */
+  --aurora-green:  #A3BE8C;
+  --fjord-blue:    #81A1C1;
+  --berry-red:     #BF616A;
+  --polar-sun:     #D08770;
+  --glacier-yellow:#EBCB8B;
+
+  /* App roles */
+  --bg-dark:   var(--midnight-blue);
+  --bg-card:   rgba(59,66,82,.82);       /* glassy card */
+  --bg-header: #2a303c;
+
+  --text:      #E5E9F0;
+  --text-dim:  #D8DEE9;
+  --text-inv:  #0E1116;
+
+  --border:        rgba(143,188,187,.16);
+  --glass-border:  rgba(143,188,187,.12);
+
+  --radius:    12px;
+  --radius-sm: 9px;
+
+  --shadow:    0 12px 38px rgba(0,0,0,.45);
+  --shadow-sm: 0 6px 18px rgba(0,0,0,.35);
+
+  --focus:     0 0 0 3px rgba(129,161,193,.45); /* fjord-blue glow */
+
+  --transition: all .22s ease;
+
+  /* Typography */
+  --font-ui: 'Montserrat', 'Segoe UI', system-ui, -apple-system, sans-serif;
+  --weight-light: 300;
+  --weight-medium: 500;
+}
+
+/* ----------------------------- Base -------------------------------------- */
+body{
+  display: flex;
+  flex-direction: column;
+  font-family: var(--font-ui);
+  font-weight: var(--weight-light);
+  letter-spacing: .2px;
+  background: var(--bg-dark);
+  color: var(--text);
+  line-height: 1.5;
+  overflow: hidden;
+}
+
+/* Subtle Nordic pattern */
+body::after{
+  content: "";
+  position: fixed; inset: 0;
+  background-image:
+    radial-gradient(circle at 10% 20%, rgba(143,188,187,.04) 0 2px, transparent 3px),
+    radial-gradient(circle at 30% 60%, rgba(129,161,193,.04) 0 2px, transparent 3px),
+    radial-gradient(circle at 70% 40%, rgba(163,190,140,.04) 0 2px, transparent 3px);
+  background-size: 220px 220px, 260px 260px, 300px 300px;
+  pointer-events: none;
+  z-index: -1;
+}
+
+::selection{
+  background: rgba(129,161,193,.28);
+  color: var(--text);
+}
+
+/* ----------------------------- Layout ------------------------------------ */
+header{
+  background: var(--bg-header);
+  display: flex; align-items: center; justify-content: space-between;
+  padding: .65rem 1rem;
+  border-bottom: 1px solid var(--border);
+  box-shadow: var(--shadow);
+  z-index: 10;
+}
+header .logo{
+  height: 42px; object-fit: contain; filter: brightness(1.12) hue-rotate(5deg);
+}
+nav ul{ list-style: none; display: flex; gap: .6rem; margin: 0; padding: 0; }
+
+main{
+  flex: 1;
+  display: grid;
+  grid-template-columns: 300px 1fr 300px;
+  gap: 1.25rem;
+  padding: 1.25rem;
+  overflow: hidden;
+}
+
+footer{
+  background: var(--bg-header);
+  padding: .28rem .75rem;
+  min-height: 32px;
+  font-size: .72rem;
+  display: flex; align-items: center; justify-content: space-between;
+  border-top: 1px solid var(--border);
+}
+footer p{ color: var(--text-dim); margin: 0; }
+
+/* ----------------------------- Cards ------------------------------------- */
+.card, .scanner-controls, .rendering-controls{
+  background: var(--bg-card);
+  border: 1px solid var(--glass-border);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow);
+  padding: 1.2rem;
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+}
+.card-header{
+  padding: 1rem 1.2rem;
+  border-bottom: 1px solid var(--border);
+  color: var(--nordic-frost);
+  font-weight: var(--weight-light);
+  display: flex; align-items: center; gap: .55rem;
+}
+.card-content{ padding: 1.1rem 1.2rem; }
+
+.scanner-display .card{ padding: 0; display: flex; flex-direction: column; overflow: hidden; }
+.scanner-display .card-image{
+  display: flex; align-items: center; justify-content: center;
+  background: rgba(46,52,64,.5);
+  border-radius: 8px; overflow: hidden; height: 100%;
+}
+
+/* Stream image */
+.dispimg_us{
+  display: block;
+  max-width: 100%;
+  max-height: 75vh;
+  object-fit: contain;
+  transition: transform .28s ease;
+}
+.dispimg_us:hover{ transform: scale(1.02); }
+
+/* ---------------------------- Buttons ------------------------------------ */
+.button{
+  background: linear-gradient(to bottom, var(--arctic-dawn), var(--deep-fjord));
+  color: var(--text);
+  border: 1px solid var(--glass-border);
+  border-radius: var(--radius-sm);
+  padding: .72rem 1rem;
+  font-size: .92rem;
+  font-weight: var(--weight-light);
+  cursor: pointer;
+  display: inline-flex; align-items: center; justify-content: center; gap: .55rem;
+  transition: var(--transition);
+  width: 100%;
+}
+.button:hover{
+  background: linear-gradient(to bottom, var(--snow-shadow), var(--arctic-dawn));
+  border-color: var(--nordic-frost);
+  transform: translateY(-2px);
+  box-shadow: 0 6px 16px rgba(143,188,187,.22);
+}
+.button:active{ transform: translateY(0); }
+.button:disabled, .button.is-loading{ opacity: .6; pointer-events: none; }
+
+/* Stronger “action” buttons */
+.start-scan-button, .multi-path-button{
+  background: linear-gradient(to bottom, var(--fjord-blue), var(--deep-fjord));
+  border-color: rgba(129,161,193,.35);
+  box-shadow:
+    inset 0 1px 0 rgba(255,255,255,.08),
+    inset 0 -1px 0 rgba(0,0,0,.28);
+}
+.start-scan-button:hover, .multi-path-button:hover{
+  background: linear-gradient(to bottom, #8fb1d3, var(--fjord-blue));
+  border-color: var(--fjord-blue);
+}
+
+/* Axis-style border emphasis */
+.axis-style{
+  border: 1px solid rgba(143,188,187,.34);
+  box-shadow:
+    inset 0 1px 0 rgba(255,255,255,.08),
+    inset 0 -1px 0 rgba(0,0,0,.28);
+}
+.axis-style:hover{ border-color: var(--nordic-frost); }
+
+/* Exit button */
+.exit-button{
+  width: auto;
+  padding: .48rem .9rem;
+  background: linear-gradient(to bottom, var(--snow-shadow), var(--deep-fjord));
+}
+.exit-button:hover{
+  background: linear-gradient(to bottom, var(--berry-red), #a84d56);
+  box-shadow: 0 0 0 2px rgba(191,97,106,.32);
+}
+
+/* Header toggle buttons */
+.icon-button{
+  display: inline-flex; align-items: center; gap: .5rem;
+  padding: .56rem .92rem;
+  width: auto;
+  background: linear-gradient(to bottom, var(--arctic-dawn), var(--deep-fjord));
+  color: var(--text);
+  border: 1px solid var(--glass-border);
+  border-radius: var(--radius-sm);
+  transition: var(--transition);
+}
+.icon-button img.icon{ width: 20px; height: 20px; filter: brightness(1.3); }
+.icon-button:hover{
+  background: linear-gradient(to bottom, var(--snow-shadow), var(--arctic-dawn));
+  border-color: var(--nordic-frost);
+  transform: translateY(-2px);
+  box-shadow: var(--shadow-sm);
+}
+.icon-button.active{
+  outline: 2px solid var(--nordic-frost);
+  background: linear-gradient(to bottom, var(--arctic-dawn), var(--snow-shadow));
+}
+
+/* Keyboard/step safety highlight */
+.danger-step{ border: 2px solid #fa5252; background: #fff5f5; }
+
+/* ---------------------------- Controls ----------------------------------- */
+.scan-buttons{
+  display: grid; grid-template-columns: 1fr 1fr; gap: .75rem; margin-bottom: 1.5rem;
+}
+.automatic-controls, .manual-adjustments, .rendering-controls{ margin-top: 1.5rem; }
+
+.automatic-controls h2, .manual-adjustments h2, .rendering-controls h2{
+  font-size: 1rem; font-weight: var(--weight-light); color: var(--nordic-frost);
+  margin: 0 0 1rem 0; display: flex; align-items: center; gap: .6rem;
+}
+.automatic-controls h2::before,
+.manual-adjustments h2::before,
+.rendering-controls h2::before{
+  content: ""; width: 4px; height: 16px; background: var(--nordic-frost); border-radius: 2px;
+}
+
+/* D-Pad */
+.dpad{
+  display: grid;
+  grid-template-columns: 48px 1fr 48px;
+  grid-template-rows: 42px 48px 42px;
+  gap: 6px;
+  align-items: center; justify-items: center;
+  max-width: 260px; margin: .5rem auto 1rem;
+}
+.dpad-btn i{ font-size: 1.1rem; }
+.dpad-up, .dpad-left, .dpad-right, .dpad-down{
+  background: linear-gradient(to bottom, var(--arctic-dawn), var(--deep-fjord));
+  color: var(--text);
+  border: 1px solid var(--glass-border);
+  border-radius: var(--radius-sm);
+  width: 100%; height: 100%;
+  display: flex; align-items: center; justify-content: center;
+  transition: var(--transition);
+}
+.dpad-up:hover, .dpad-left:hover, .dpad-right:hover, .dpad-down:hover{
+  background: linear-gradient(to bottom, var(--snow-shadow), var(--arctic-dawn));
+  border-color: var(--nordic-frost);
+}
+
+/* Z row + rotation */
+.z-row{ display: grid; grid-template-columns: 1fr 1fr; gap: .5rem; max-width: 260px; margin: 0 auto .75rem; }
+.z-btn{ height: 42px; font-size: .86rem; }
+.rotation-row{ display: flex; gap: .5rem; justify-content: center; }
+
+/* Inputs */
+input[type="number"], select, .select{
+  background: linear-gradient(to bottom, var(--deep-fjord), var(--arctic-dawn));
+  color: var(--text);
+  border: 1px solid var(--glass-border);
+  border-radius: var(--radius-sm);
+  padding: .55rem .65rem;
+  width: 100%;
+  outline: none;
+  transition: var(--transition);
+}
+input[type="number"]:focus, select:focus{
+  border-color: var(--nordic-frost);
+  box-shadow: var(--focus);
+}
+
+/* ----------------------------- Modal ------------------------------------- */
+.modal{
+  position: fixed; inset: 0;
+  background: rgba(46,52,64,.9);
+  display: none;
+  place-items: center;
+  z-index: 1000;
+  backdrop-filter: blur(4px);
+  -webkit-backdrop-filter: blur(4px);
+}
+.modal-content{
+  background: var(--bg-card);
+  color: var(--text);
+  border: 1px solid var(--glass-border);
+  border-radius: var(--radius);
+  padding: 2rem;
+  max-width: 420px; width: 92%;
+  text-align: center;
+  box-shadow: var(--shadow);
+}
+
+/* ----------------------- Stream Status Overlay --------------------------- */
+.stream-wrap{ position: relative; display: inline-block; }
+.stream-wrap > img{ display: block; max-width: 100%; height: auto; }
+
+.status-overlay{
+  position: absolute; inset: 0;
+  display: flex; align-items: center; justify-content: center;
+  background: rgba(9,11,14,.55);
+  backdrop-filter: blur(2px);
+  z-index: 10;
+}
+.status-overlay.hidden{ display: none; }
+
+.status-card{
+  min-width: 280px; max-width: 440px;
+  padding: 16px 18px;
+  border-radius: 14px;
+  background: #0f1115;
+  color: #e6e8eb;
+  text-align: center;
+  border: 1px solid rgba(143,188,187,.16);
+  box-shadow: 0 10px 32px rgba(0,0,0,.45), inset 0 1px 0 rgba(255,255,255,.04);
+  font-family: var(--font-ui);
+}
+.status-card .title{ font-weight: 700; font-size: 15px; letter-spacing: .2px; margin-top: 10px; }
+.status-card .subtitle{ opacity: .85; font-size: 13px; margin-top: 6px; }
+
+/* Minimal spinner (used inside overlay) */
+.spinner{
+  width: 26px; height: 26px; border-radius: 50%;
+  border: 3px solid transparent;
+  border-top-color: #91c9ff; border-right-color: #91c9ff;
+  margin: 0 auto 4px;
+  animation: spin .9s linear infinite;
+}
+
+/* --------------------- Global Loading (for .is-loading) ------------------ */
+.is-loading{ position: relative; pointer-events: none; opacity: .7; }
+.is-loading::after{
+  content: "";
+  position: absolute; inset: 0;
+  background:
+    radial-gradient(circle at 50% 50%, rgba(255,255,255,.9) 0 20%, transparent 21%),
+    conic-gradient(from 0turn, rgba(255,255,255,0) 0 85%, rgba(255,255,255,.9) 86% 100%);
+  -webkit-mask: radial-gradient(circle, transparent 58%, #000 59%);
+  mask: radial-gradient(circle, transparent 58%, #000 59%);
+  animation: spin 1s linear infinite;
+}
+
+/* --------------------------- Accessibility ------------------------------- */
+:where(button, .button, .icon-button, select, input):focus-visible{
+  outline: none;
+  box-shadow: var(--focus);
+}
+
+/* Reduced motion */
+@media (prefers-reduced-motion: reduce){
+  *{ animation-duration: .001ms !important; animation-iteration-count: 1 !important; transition-duration: .001ms !important; scroll-behavior: auto !important; }
+}
+
+/* --------------------------- Scrollbars ---------------------------------- */
+::-webkit-scrollbar { width: 10px; height: 10px; }
+::-webkit-scrollbar-track { background: var(--deep-fjord); }
+::-webkit-scrollbar-thumb { background: var(--arctic-dawn); border-radius: 6px; }
+::-webkit-scrollbar-thumb:hover { background: var(--nordic-frost); }
+
+/* ---------------------------- Utilities ---------------------------------- */
+.hidden{ display: none !important; }
+.muted{ color: var(--text-dim); }
+
+/* --------------------------- Animations ---------------------------------- */
+@keyframes spin { to { transform: rotate(360deg); } }
+
+/* --------------------------- Responsive ---------------------------------- */
+@media (max-width: 1200px){
+  main{ grid-template-columns: 250px 1fr; }
+  .rendering-controls{ grid-column: span 2; margin-top: 1rem; }
+}
+@media (max-width: 900px){
+  main{ grid-template-columns: 1fr; gap: 1rem; }
+  .scanner-controls, .rendering-controls{ order: -1; }
+}
+@media (max-width: 600px){
+  main{ padding: 1rem; }
+  .card, .scanner-controls, .rendering-controls{ padding: 1rem; }
+  .button{ padding: .62rem .78rem; font-size: .86rem; }
+  .scan-buttons{ grid-template-columns: 1fr; }
+  .dpad{
+    grid-template-columns: 56px 1fr 56px;
+    grid-template-rows: 48px 56px 48px;
+    gap: 8px; max-width: 300px;
+  }
+  .z-btn{ height: 44px; }
+}
+
   background: var(--deep-fjord);
 }
 
@@ -419,3 +834,5 @@ body::after {
 ::-webkit-scrollbar-thumb:hover {
   background: var(--nordic-frost);
 }
+
+

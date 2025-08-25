@@ -108,19 +108,18 @@ def _init_ultrasound() -> Tuple[int, int, Tuple[float, float]]:
 _UL_W, _UL_H, _UL_RES = _init_ultrasound()
 
 def _ultrasound_mjpeg_stream() -> Iterable[bytes]:
-    try:
+    """Never returns; yields placeholders while waiting for a probe."""
+    while True:
         try:
-            gen = ultrasound_sdk.generate_image()  # type: ignore
-        except TypeError:
-            gen = ultrasound_sdk.generate_image(_UL_W, _UL_H, _UL_RES)
-        for frame in gen:
-            yield (
-                b"--frame\r\n"
-                b"Content-Type: image/jpeg\r\n\r\n" + frame + b"\r\n\r\n"
-            )
-    except Exception as e:
-        print(f"[ultrasound stream] stopped: {e}")
-        return
+            for frame in ultrasound_sdk.generate_image():
+                yield (
+                    b"--frame\r\n"
+                    b"Content-Type: image/jpeg\r\n\r\n" + frame + b"\r\n\r\n"
+                )
+            # If the generator exhausted (it shouldn't), restart next loop turn
+        except Exception as e:
+            print(f"[ultrasound stream] error (will retry): {e}")
+            time.sleep(0.5)  # tiny backoff and retry
 
 # ------------------------------------------------------------------------------
 # Flag helpers
@@ -233,6 +232,17 @@ def ultrasound_video_feed():
         mimetype="multipart/x-mixed-replace; boundary=frame",
     )
 
+@app.route("/api/us-restart", methods=["POST"])
+def api_us_restart():
+    try:
+        ultrasound_sdk.reset()
+        # give it a moment to release the device in the OS
+        time.sleep(0.2)
+        ultrasound_sdk.initialize_ultrasound()
+        return jsonify(success=True, message="Ultrasound restarted")
+    except Exception as e:
+        return jsonify(success=False, message=str(e)), 500
+    
 @app.route("/video_feed")
 def video_feed():
     return Response(
@@ -327,37 +337,84 @@ _APP_SHUTTING_DOWN = False
 _WEBVIEW_WINDOW = None  # type: ignore
 
 def _graceful_shutdown_async():
-    """Do cleanup then terminate the process."""
+    """Best-effort cleanup, then terminate the process."""
+    import os
+    import time
+
     global _APP_SHUTTING_DOWN
     if _APP_SHUTTING_DOWN:
         return
     _APP_SHUTTING_DOWN = True
+    print("[Shutdown] initiating…")
 
     try:
+        # 1) Disable keyboard control (ignore if not available)
         try:
-            enable_keyboard(False)  # no-op if stub
-        except Exception:
-            pass
+            enable_keyboard(False)  # no-op if stubbed
+            try:
+                import keyboard as _kbd  # if the module is present
+                _kbd.unhook_all()
+            except Exception:
+                pass
+        except Exception as e:
+            print("[Shutdown] keyboard disable error:", e)
 
+        # 2) Ultrasound: freeze/stop/close (ignore errors)
+        try:
+            from app.core import ultrasound_sdk as _us
+            try: _us.freeze()
+            except Exception: pass
+            try: _us.stop()
+            except Exception: pass
+            try: _us.close()
+            except Exception: pass
+        except Exception as e:
+            print("[Shutdown] ultrasound close error:", e)
+
+        # 3) Webcam: release camera if present
+        try:
+            from app.utils.webcam import camera as _cam
+            if hasattr(_cam, "release"):
+                _cam.release()
+        except Exception as e:
+            print("[Shutdown] webcam release error:", e)
+
+        # 4) Serial
         try:
             close_serial()
         except Exception as e:
             print("[Shutdown] close_serial error:", e)
 
+        # 5) Clear simple flag files (best effort)
+        try:
+            for f in (Config.SCANNING_FLAG_FILE, Config.MULTISWEEP_FLAG_FILE):
+                try:
+                    f.write_text("0")
+                except Exception:
+                    pass
+        except Exception:
+            pass
+
+        # 6) Close the desktop window if we’re in pywebview
         if _HAS_WEBVIEW:
             try:
-                # Prefer the thread-safe helper if available
+                # Thread-safe in recent pywebview
                 webview.destroy_window()
-            except Exception:
+            except Exception as e1:
+                print("[Shutdown] destroy_window error:", e1)
                 try:
                     if _WEBVIEW_WINDOW is not None:
                         _WEBVIEW_WINDOW.destroy()
-                except Exception as ee:
-                    print("[Shutdown] webview destroy error:", ee)
-        # Small delay so the HTTP 200 can flush
+                except Exception as e2:
+                    print("[Shutdown] webview window destroy error:", e2)
+
+        # Let the HTTP response flush before exiting hard
         time.sleep(0.3)
+
     finally:
+        # Use hard exit to avoid hanging threads (keyboard hooks, webview loop, etc.)
         os._exit(0)
+
 
 @app.route("/api/exit", methods=["POST"])
 def api_exit():
