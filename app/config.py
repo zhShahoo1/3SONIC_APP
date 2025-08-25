@@ -7,29 +7,55 @@ from pathlib import Path
 from dataclasses import dataclass
 
 
-def _detect_base_dir() -> Path:
+# ------------------------------- Path helpers -------------------------------
+
+def _candidate_base_dirs() -> list[Path]:
     """
-    Choose a base directory that works in both:
-      - development (source tree)
-      - frozen EXE (PyInstaller/cx_Freeze)
-    In frozen mode we place writable content next to the EXE (NOT _MEIPASS).
+    Order of preference:
+      1) Dev repo root (folder that contains /app)
+      2) Frozen EXE folder (next to the executable)
+      3) Current working directory (last resort)
     """
+    here = Path(__file__).resolve()           # .../app/config.py
+    dev_root = here.parent.parent             # .../project-root
+    cands: list[Path] = [dev_root]
+
     if getattr(sys, "frozen", False):
-        return Path(sys.executable).resolve().parent
-    # dev: repo root (folder that contains /app)
-    return Path(__file__).resolve().parent.parent
+        cands.append(Path(sys.executable).resolve().parent)
+
+    cands.append(Path.cwd())
+
+    # de-dup while preserving order
+    out, seen = [], set()
+    for p in cands:
+        s = str(p)
+        if s not in seen:
+            out.append(p)
+            seen.add(s)
+    return out
+
+
+def _pick_existing(*paths: Path, fallback: Path) -> Path:
+    """Return the first path that exists; otherwise the fallback (not created)."""
+    for p in paths:
+        if p.exists():
+            return p.resolve()
+    return fallback.resolve()
 
 
 def resource_path(relative: str) -> Path:
     """
-    Resolve a path to a bundled/read-only resource (DLLs, templates, dcmimage.dcm).
-    In frozen mode, prefer sys._MEIPASS (bundle temp dir). In dev, use repo paths.
+    Read-only resources (DLLs, templates, dcmimage.dcm).
+    In frozen mode: use sys._MEIPASS. In dev: use repo root.
     """
     if getattr(sys, "frozen", False):
         base = Path(getattr(sys, "_MEIPASS", Path.cwd()))
         return (base / relative).resolve()
+    # dev: project root
     return (Path(__file__).resolve().parent.parent / relative).resolve()
 
+
+# --------------------------------- Serial -----------------------------------
 
 @dataclass(frozen=True)
 class SerialProfile:
@@ -40,29 +66,47 @@ class SerialProfile:
     # Optional future: match by VID/PID
 
 
+# --------------------------------- Config -----------------------------------
+
 class Config:
     """
-    Centralized, environment‑overridable configuration.
+    Centralized, environment-overridable configuration.
 
     Import everywhere as:
         from app.config import Config, resource_path
     """
 
     # ---------------- Paths (dev & EXE friendly) ----------------
-    BASE_DIR: Path = _detect_base_dir()                 # repo root in dev; EXE folder when frozen
-    APP_DIR: Path = (BASE_DIR / "app").resolve() if (BASE_DIR / "app").exists() else BASE_DIR
-    STATIC_DIR: Path = (BASE_DIR / "static").resolve()  # we bundle static -> dist/<name>/static
-    TEMPLATES_DIR: Path = (BASE_DIR / "templates").resolve()
+    # Allow an explicit override if desired
+    _ENV_BASE = os.environ.get("APP_BASE_DIR")
+    BASE_DIR: Path = Path(_ENV_BASE).resolve() if _ENV_BASE else _candidate_base_dirs()[0]
 
-    # Writable output (keep under static/data to match your current files/links)
+    # The Python package location (always the /app folder where this file lives)
+    APP_DIR: Path = Path(__file__).resolve().parent.parent
+
+    # Prefer project-root/static over app/static (do NOT create STATIC_DIR here)
+    _env_static = os.environ.get("STATIC_DIR")
+    STATIC_DIR: Path = Path(_env_static).resolve() if _env_static else _pick_existing(
+        BASE_DIR / "static",           # preferred: project-root/static
+        APP_DIR / "static",            # fallback: app/static (only if it already exists)
+        fallback=BASE_DIR / "static",  # last fallback; may not exist yet
+    )
+
+    # Prefer project-root/templates over app/templates
+    _env_templates = os.environ.get("TEMPLATES_DIR")
+    TEMPLATES_DIR: Path = Path(_env_templates).resolve() if _env_templates else _pick_existing(
+        BASE_DIR / "templates",            # preferred: project-root/templates
+        APP_DIR / "templates",             # fallback: app/templates
+        fallback=BASE_DIR / "templates",
+    )
+
+    # Writable output (kept under STATIC/data). Only create these, not STATIC_DIR itself.
     DATA_DIR: Path = (STATIC_DIR / "data").resolve()
     LOGS_DIR: Path = (DATA_DIR / "logs").resolve()
-
-    # Create if missing
     for _p in (DATA_DIR, LOGS_DIR):
         _p.mkdir(parents=True, exist_ok=True)
 
-    # Tiny flag files used by your flow
+    # Tiny flag files used by your flow (live next to repo root / EXE folder)
     SCANNING_FLAG_FILE: Path = (BASE_DIR / "scanning").resolve()
     MULTISWEEP_FLAG_FILE: Path = (BASE_DIR / "multisweep").resolve()
     RECDIR_FILE: Path = (BASE_DIR / "recdir").resolve()
@@ -81,20 +125,15 @@ class Config:
     OFFSET_Z: float = float(os.environ.get("OFFSET_Z", -70.0))
 
     # ---------------- Feedrates / speeds ----------------
-    # Automated scan path speed (leave as-is)
     SCAN_SPEED_MM_PER_MIN: float = float(os.environ.get("SCAN_SPEED", 90))
-    # Fast feed for init / go2StartScan (leave as-is)
-    FAST_FEED_MM_PER_MIN: float = float(os.environ.get("FAST_FEED", 20 * 60))  # 20 mm/s -> 1200 mm/min
-    # Dedicated manual jog feed for GUI X/Y/Z moves (snappy but safe)
+    FAST_FEED_MM_PER_MIN: float = float(os.environ.get("FAST_FEED", 20 * 60))  # 1200 mm/min
     JOG_FEED_MM_PER_MIN: float = float(os.environ.get("JOG_FEED", 2400))       # ~40 mm/s
 
     # ---------------- Ultrasound / Acquisition ----------------
-    # Live preview size
     ULTRA_W: int = int(os.environ.get("ULTRASOUND_WIDTH", 1024))
     ULTRA_H: int = int(os.environ.get("ULTRASOUND_HEIGHT", 1024))
 
-    # Record-time parameters (kept consistent with your original)
-    TRAVEL_SPEED_X_MM_PER_S: float = float(os.environ.get("TRAVEL_SPEED_X", 500.0))  # ~5 mm/s
+    TRAVEL_SPEED_X_MM_PER_S: float = float(os.environ.get("TRAVEL_SPEED_X", 500.0))
     ELEV_RESOLUTION_MM: float = float(os.environ.get("ELEV_RESOLUTION", 0.06))
     DX_MM: float = float(os.environ.get("DX_MM", 118))
     TARGET_FPS: float = float(os.environ.get("TARGET_FPS", 25))
@@ -103,7 +142,6 @@ class Config:
     SERIAL_BAUD: int = int(os.environ.get("SERIAL_BAUD", 115200))
     SERIAL_TIMEOUT_S: float = float(os.environ.get("SERIAL_TIMEOUT", 1.0))
     SERIAL_PROFILE: SerialProfile = SerialProfile()
-    # Optionally pin a COM port via env
     SERIAL_PORT: str | None = os.environ.get("SERIAL_PORT") or None
 
     # Background manager timing
@@ -120,7 +158,7 @@ class Config:
     STUDY_DESC: str = os.environ.get("STUDY_DESC", "Ultrasound Volume")
     WINDOW_CENTER: int = int(os.environ.get("DICOM_WINDOW_CENTER", 0))
     WINDOW_WIDTH: int = int(os.environ.get("DICOM_WINDOW_WIDTH", 1000))
-    BITS_ALLOCATED: int = int(os.environ.get("DICOM_BITS_ALLOCATED", 16))  # 16-bit series
+    BITS_ALLOCATED: int = int(os.environ.get("DICOM_BITS_ALLOCATED", 16))
     BITS_STORED: int = int(os.environ.get("DICOM_BITS_STORED", 16))
     HIGH_BIT: int = int(os.environ.get("DICOM_HIGH_BIT", 15))
     PHOTOMETRIC: str = os.environ.get("DICOM_PHOTOMETRIC", "MONOCHROME2")
@@ -131,7 +169,7 @@ class Config:
     # ---------------- UI / Timings ----------------
     DELAY_BEFORE_RECORD_S: float = float(os.environ.get("DELAY_BEFORE_RECORD", 9.0))
 
-    # ---------------- Service / scan positioning (for the dynamic Insert‑Bath button) ----
+    # ---------------- Service / scan positioning (Insert-Bath button) --------
     TARGET_Z_MM: float = float(os.environ.get("TARGET_Z_MM", 100.0))
     SCAN_POSE: dict[str, float] = {
         "X": float(os.environ.get("SCAN_POSE_X", 53.5)),
@@ -147,10 +185,7 @@ class Config:
     # ---------------- Helpers ----------------
     @staticmethod
     def ensure_measurement_dir() -> Path:
-        """
-        Create and return a timestamped measurement directory under DATA/.
-        Matches your record.py behavior.
-        """
+        """Create and return a timestamped measurement directory under DATA/."""
         from datetime import datetime
         ts = datetime.now().strftime("%Y%m%d_%H%M%S")
         mdir = (Config.DATA_DIR / ts).resolve()

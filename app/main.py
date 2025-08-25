@@ -1,8 +1,10 @@
 # app/main.py
 from __future__ import annotations
 
+import os
 import sys
 import time
+import threading
 import subprocess as sp
 from pathlib import Path
 from typing import Tuple, Iterable
@@ -36,6 +38,7 @@ if __package__ is None or __package__ == "":
         send_now,
         send_gcode,
         wait_for_motion_complete,
+        close_serial,          # <-- added
     )
     # keyboard is optional; keep best-effort start
     try:
@@ -54,6 +57,7 @@ else:
         send_now,
         send_gcode,
         wait_for_motion_complete,
+        close_serial,          # <-- added
     )
     try:
         from .core.keyboard_control import start_keyboard_listener, enable_keyboard
@@ -317,6 +321,60 @@ def overview_image():
     return jsonify(success=True, message="Overview requested")
 
 # ------------------------------------------------------------------------------
+# Graceful Exit API
+# ------------------------------------------------------------------------------
+_APP_SHUTTING_DOWN = False
+_WEBVIEW_WINDOW = None  # type: ignore
+
+def _graceful_shutdown_async():
+    """Do cleanup then terminate the process."""
+    global _APP_SHUTTING_DOWN
+    if _APP_SHUTTING_DOWN:
+        return
+    _APP_SHUTTING_DOWN = True
+
+    try:
+        try:
+            enable_keyboard(False)  # no-op if stub
+        except Exception:
+            pass
+
+        try:
+            close_serial()
+        except Exception as e:
+            print("[Shutdown] close_serial error:", e)
+
+        if _HAS_WEBVIEW:
+            try:
+                # Prefer the thread-safe helper if available
+                webview.destroy_window()
+            except Exception:
+                try:
+                    if _WEBVIEW_WINDOW is not None:
+                        _WEBVIEW_WINDOW.destroy()
+                except Exception as ee:
+                    print("[Shutdown] webview destroy error:", ee)
+        # Small delay so the HTTP 200 can flush
+        time.sleep(0.3)
+    finally:
+        os._exit(0)
+
+@app.route("/api/exit", methods=["POST"])
+def api_exit():
+    """
+    Frontend should show a confirm() first, then POST here.
+    This returns immediately while cleanup runs in a thread.
+    """
+    threading.Thread(target=_graceful_shutdown_async, daemon=True).start()
+    return jsonify(success=True, message="Shutting down...")
+
+# Back-compat alias (GET /shutdown)
+@app.route("/shutdown")
+def shutdown_alias():
+    threading.Thread(target=_graceful_shutdown_async, daemon=True).start()
+    return "Shutting down..."
+
+# ------------------------------------------------------------------------------
 # Desktop launcher (pywebview) + fallback to browser
 # ------------------------------------------------------------------------------
 _UI_TITLE = "3SONIC 3D Ultrasound app"  # Keep consistent with Win32 dark-titlebar tweak
@@ -325,9 +383,11 @@ def _launch_desktop():
     """
     Launch a native desktop window that hosts the Flask UI.
     """
+    global _WEBVIEW_WINDOW
+
     url = "http://127.0.0.1:5000"
     if _HAS_WEBVIEW:
-        window = webview.create_window(
+        _WEBVIEW_WINDOW = webview.create_window(
             title=_UI_TITLE,
             url=url,
             width=380,

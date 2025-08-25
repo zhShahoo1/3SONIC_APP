@@ -4,6 +4,7 @@
    - Debounced move commands so the controller isn’t flooded
    - Insert Bath button toggles between lower and position-for-scan
    - Ultrasound stream auto-reloads on error and on a timer
+   - Exit button confirms and calls /api/exit
    ========================================================================== */
 
 (() => {
@@ -12,12 +13,12 @@
     init: "/initscanner",
     scan: "/scanpath",
     multipath: "/multipath",
-    move: "/move_probe",               // expects { direction, step }
+    move: "/move_probe",                 // expects { direction, step }
     openITK: "/open-itksnap",
     overview: "/overViewImage",
-
-    lowerPlate: "/api/lower-plate",    // POST
-    posForScan: "/api/position-for-scan", // POST
+    lowerPlate: "/api/lower-plate",      // POST
+    posForScan: "/api/position-for-scan",// POST
+    exit: "/api/exit",                   // POST
   };
 
   const SELECTORS = {
@@ -26,6 +27,7 @@
     webcamImg: "#im2",
     scanModal: "#scanInProgress",
     buttons: "[data-action]",
+    lowerPlateBtn: "#lower-plate-btn",
   };
 
   // ------------------------------ Helpers ----------------------------------
@@ -42,8 +44,7 @@
   async function apiGet(url) {
     const res = await fetch(url, { method: "GET" });
     if (!res.ok) throw new Error(`${res.status} ${res.statusText}`);
-    // many endpoints return HTML; we don't rely on this value anywhere
-    return res.text();
+    return res.text(); // we only log results; content not used
   }
 
   async function apiPostJSON(url, data = {}) {
@@ -68,6 +69,7 @@
       const v = parseFloat(el?.value || "1");
       return Number.isFinite(v) ? v : 1;
     },
+    insertBathStage: 0, // 0 = Insert Bath -> lower; 1 = Raise Plate to Scan -> position
   };
 
   // --------------------------- Actions (API) --------------------------------
@@ -137,6 +139,31 @@
     }
   }
 
+  async function exitApp(btn) {
+    // explicit confirmation requested
+    if (!confirm("Exit the app now? This will close the scanner connection and window.")) return;
+    setBusy(btn, true);
+    const originalHTML = btn.innerHTML;
+    try {
+      btn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Exiting...';
+      await fetch(ENDPOINTS.exit, { method: "POST" });
+
+      // PyWebView will close the window shortly after the backend handles exit.
+      // If running in a normal browser fallback, try to close/blank.
+      setTimeout(() => {
+        try { window.close(); } catch {}
+        try { window.location.href = "about:blank"; } catch {}
+      }, 250);
+    } catch (e) {
+      console.error("[exit] error:", e.message);
+      // If backend didn't terminate, restore button after a moment.
+      setTimeout(() => {
+        btn.innerHTML = originalHTML;
+        setBusy(btn, false);
+      }, 1200);
+    }
+  }
+
   // Movement & rotation (debounced)
   const sendMove = debounce(async (direction, step) => {
     try {
@@ -165,6 +192,46 @@
     }
   }, 120);
 
+  // ---------------------- Insert Bath / Scan Toggle -------------------------
+  function bindInsertBath() {
+    const btn = $(SELECTORS.lowerPlateBtn);
+    if (!btn) return;
+
+    const setBtnLabel = (txt) => {
+      const span = btn.querySelector("span");
+      if (span) span.textContent = txt;
+      else btn.textContent = txt;
+    };
+
+    async function handleLowerPlate() {
+      try {
+        setBusy(btn, true);
+        if (state.insertBathStage === 0) {
+          console.log("[bath] lower plate…");
+          await apiPostJSON(ENDPOINTS.lowerPlate, {});
+          setBtnLabel("Raise Plate to Scan");
+          state.insertBathStage = 1;
+        } else {
+          console.log("[bath] position for scan…");
+          await apiPostJSON(ENDPOINTS.posForScan, {});
+          setBtnLabel("Insert Bath");
+          state.insertBathStage = 0;
+        }
+      } catch (e) {
+        console.error("[bath] error:", e.message);
+        // Reset UI so user can retry cleanly
+        setBtnLabel("Insert Bath");
+        state.insertBathStage = 0;
+      } finally {
+        setBusy(btn, false);
+      }
+    }
+
+    btn.addEventListener("click", handleLowerPlate);
+    // initial label (defensive)
+    setBtnLabel(state.insertBathStage === 0 ? "Insert Bath" : "Raise Plate to Scan");
+  }
+
   // --------------------------- UI Bindings ----------------------------------
   function bindButtons() {
     $$(SELECTORS.buttons).forEach((btn) => {
@@ -189,6 +256,8 @@
 
           case "show-ultrasound": return showUltrasound();
           case "show-webcam": return showWebcam();
+
+          case "exit": return exitApp(btn);
         }
       });
     });
@@ -215,6 +284,8 @@
       ["1", () => setStep(0.1)],
       ["2", () => setStep(1)],
       ["3", () => setStep(10)],
+      ["[", () => cycleStep(-1)],
+      ["]", () => cycleStep(+1)],
     ]);
 
     window.addEventListener("keydown", (ev) => {
@@ -232,6 +303,16 @@
     const el = $(SELECTORS.stepSelect);
     if (el) el.value = String(val);
     console.log("[step] set to", val, "mm");
+  }
+
+  function cycleStep(direction = +1) {
+    const steps = ["0.1", "0.5", "1", "3", "5", "10"];
+    const el = $(SELECTORS.stepSelect);
+    if (!el) return;
+    const idx = steps.indexOf(el.value);
+    const next = Math.min(steps.length - 1, Math.max(0, idx + direction));
+    el.value = steps[next];
+    el.dispatchEvent(new Event("change"));
   }
 
   // Streams
@@ -255,52 +336,23 @@
     const us = $(SELECTORS.ultrasoundImg);
     if (!us) return;
 
-    const reload = () => { us.src = "/ultrasound_video_feed?ts=" + Date.now(); };
+    let lastReload = 0;
+    const MIN_RELOAD_MS = 1500;
 
-    us.addEventListener("error", reload);   // reload if the stream errors
-    setInterval(() => {
-      if (document.body.contains(us)) reload(); // periodic nudge
-    }, 60000);
-  }
-
-  // Insert Bath button (toggle)
-  function bindInsertBath() {
-    const btn = document.getElementById("lower-plate-btn");
-    if (!btn) return;
-
-    let stage = 0; // 0 = insert bath (lower Z) -> then 1 = raise/position for scan
-
-    const setBtnLabel = (txt) => {
-      const span = btn.querySelector("span");
-      if (span) span.textContent = txt;
-      else btn.textContent = txt;
+    const reload = () => {
+      const now = Date.now();
+      if (now - lastReload < MIN_RELOAD_MS) return; // throttle
+      lastReload = now;
+      const base = "/ultrasound_video_feed";
+      us.src = base + "?ts=" + now;
+      console.log("[ultrasound] reloaded");
     };
 
-    async function handleClick() {
-      try {
-        setBusy(btn, true);
-        if (stage === 0) {
-          console.log("[bath] lower plate…");
-          await apiPostJSON(ENDPOINTS.lowerPlate, {});
-          setBtnLabel("Raise Plate to Scan");
-          stage = 1;
-        } else {
-          console.log("[bath] position for scan…");
-          await apiPostJSON(ENDPOINTS.posForScan, {});
-          setBtnLabel("Insert Bath");
-          stage = 0;
-        }
-      } catch (e) {
-        console.error("[bath] error:", e.message);
-        // Reset UI so user can retry from the beginning
-        setBtnLabel("Insert Bath");
-        stage = 0;
-      } finally {
-        setBusy(btn, false);
-      }
-    }
-
-    btn.addEventListener("click", handleClick);
+    us.addEventListener("error", reload);           // reload if the stream errors
+    document.addEventListener("visibilitychange", () => {
+      if (document.visibilityState === "visible") reload();
+    });
+    setInterval(reload, 60000);                     // periodic nudge
   }
 
   // ----------------------------- Init ---------------------------------------
@@ -310,6 +362,14 @@
     bindUltrasoundAutoReload();
     bindInsertBath();
     showUltrasound(); // default visible
+
+    // optional: style step select for large steps
+    const stepEl = $(SELECTORS.stepSelect);
+    if (stepEl) {
+      const apply = () => stepEl.classList.toggle("danger-step", parseFloat(stepEl.value || "1") >= 5);
+      stepEl.addEventListener("change", apply);
+      apply();
+    }
   }
 
   document.addEventListener("DOMContentLoaded", init);
@@ -329,6 +389,7 @@
       animation: spin 1s linear infinite;
     }
     @keyframes spin { to { transform: rotate(360deg); } }
+    .danger-step { border: 2px solid #fa5252; background-color: #fff5f5; }
   `;
   document.head.appendChild(style);
 })();
