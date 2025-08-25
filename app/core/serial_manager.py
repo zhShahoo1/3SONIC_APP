@@ -5,39 +5,43 @@ import threading
 import queue
 import time
 import re
-from typing import Callable, Optional, List
+from typing import Callable, Optional, List, Tuple
 
 import serial
 import serial.tools.list_ports
 
 from app.config import Config
 
-# -------------------------------------------------------------------
+# =============================================================================
 # Shared state (module-level singleton)
-# -------------------------------------------------------------------
+# =============================================================================
 serial_port: Optional[serial.Serial] = None
 
-# Internal event; all logic uses this one
+# Queue for G-code requests that expect a small response window
+_command_queue: "queue.Queue[tuple[str, Optional[Callable[[List[str]], None]]]]" = queue.Queue()
+
+# Locks:
+# - lock: guards queued G-code write + read window (serialized)
+# - send_now_lock: guards immediate "fire-and-forget" writes
+lock = threading.Lock()
+send_now_lock = threading.Lock()
+
+# Connection state event (keep your legacy accessor)
 _connected_event = threading.Event()
 
-# Export a FUNCTION for legacy callers that do `connected_event()`
 def connected_event() -> threading.Event:
     """Return the connection Event (legacy callable API)."""
     return _connected_event
 
-# Also export a VARIABLE alias if someone imported it as a variable
+# Also export a variable alias for code that imported it as a variable
 connected_event_var: threading.Event = _connected_event
 
-# Internal locks/queues
-_command_queue: "queue.Queue[tuple[str, Optional[Callable[[List[str]], None]]]]" = queue.Queue()
-_write_lock = threading.Lock()
-_send_now_lock = threading.Lock()
 
-
-# -------------------------------------------------------------------
+# =============================================================================
 # Port detection + connect/close
-# -------------------------------------------------------------------
+# =============================================================================
 def _detect_port() -> Optional[str]:
+    """Pick an explicit port from Config or auto-detect by description patterns."""
     if Config.SERIAL_PORT:
         return Config.SERIAL_PORT
     for p in serial.tools.list_ports.comports(include_links=False):
@@ -49,131 +53,168 @@ def _detect_port() -> Optional[str]:
 
 def connect_serial(baudrate: int = Config.SERIAL_BAUD,
                    timeout: float = Config.SERIAL_TIMEOUT_S) -> Optional[serial.Serial]:
+    """Open serial port; blocking writes (write_timeout=None) for robustness."""
     global serial_port
     try:
         port = _detect_port()
         if not port:
             print("[Serial] No valid serial port found.")
             _connected_event.clear()
+            serial_port = None
             return None
 
-        sp = serial.Serial(port, baudrate, timeout=timeout)
-        time.sleep(2.0)  # allow MCU reset
-        with _write_lock:
-            serial_port = sp
+        ser = serial.Serial(port, baudrate, timeout=timeout)
+        # Ensure blocking writes like in the stable project
+        try:
+            ser.write_timeout = None
+        except Exception:
+            pass
+
+        # Give MCU time to reset if needed
+        time.sleep(2.0)
+
+        # Clear any stale input
+        try:
+            ser.reset_input_buffer()
+        except Exception:
+            pass
+
+        serial_port = ser
         _connected_event.set()
         print(f"[Serial] Connected to {port} @ {baudrate}")
-        return sp
+        return ser
+
     except serial.SerialException as e:
         print(f"[Serial] Open error: {e}")
     except Exception as e:
         print(f"[Serial] Unexpected connect error: {e}")
 
     _connected_event.clear()
+    serial_port = None
     return None
 
 
 def close_serial() -> None:
+    """Close the serial handle and clear connection state."""
     global serial_port
-    with _write_lock:
-        if serial_port:
-            try:
-                if serial_port.is_open:
-                    serial_port.close()
-                    print("[Serial] 🔌 Closed.")
-            except Exception as e:
-                print(f"[Serial] Close error: {e}")
-            finally:
-                serial_port = None
-                _connected_event.clear()
+    sp = serial_port
+    serial_port = None
+    _connected_event.clear()
+    if sp:
+        try:
+            if sp.is_open:
+                sp.close()
+                print("[Serial] 🔌 Closed.")
+        except Exception as e:
+            print(f"[Serial] Close error: {e}")
 
 
-# -------------------------------------------------------------------
+# =============================================================================
 # Background workers (queue + reconnect)
-# -------------------------------------------------------------------
+# =============================================================================
 def _process_queue() -> None:
+    """Serialize queued G-code: write + short read window (like the other project)."""
     global serial_port
     while True:
         command, callback = _command_queue.get()
         try:
-            with _write_lock:
+            # One-at-a-time for queued ops to keep write/read windows clean
+            with lock:
                 sp = serial_port
+                if not (sp and sp.is_open):
+                    print("[Serial] ⚠ No active serial connection.")
+                    if callback:
+                        callback([])
+                    continue
 
-            if not (sp and sp.is_open):
-                print("[Serial] ⚠ No active serial connection.")
-                if callback:
-                    callback([])
-                continue
+                # ---- Write ----
+                try:
+                    sp.write((command.strip() + "\n").encode("ascii", errors="ignore"))
+                    sp.flush()
+                except (serial.SerialException, serial.SerialTimeoutException, OSError) as e:
+                    print(f"[Serial] ⚠ Serial write error: {e}")
+                    try:
+                        sp.close()
+                    except Exception:
+                        pass
+                    serial_port = None
+                    _connected_event.clear()
+                    if callback:
+                        callback([])
+                    continue
 
-            try:
-                sp.write((command.strip() + "\n").encode("ascii", errors="ignore"))
-                sp.flush()
-                time.sleep(Config.SERIAL_RESPONSE_SETTLE_S)
+                # ---- Let responses accumulate briefly ----
+                time.sleep(float(getattr(Config, "SERIAL_RESPONSE_SETTLE_S", 0.05)))
 
+                # ---- Read window ----
                 lines: List[str] = []
                 start = time.time()
-                while True:
-                    got = False
-                    if sp.in_waiting:
-                        try:
+                read_window = float(getattr(Config, "SERIAL_READ_WINDOW_S", 0.5))
+                while (time.time() - start) < read_window:
+                    try:
+                        if sp.in_waiting > 0:
                             raw = sp.readline()
                             if raw:
                                 txt = raw.decode(errors="ignore").strip()
                                 if txt:
                                     lines.append(txt)
-                                    got = True
+                                    # Extend the quiet window if we keep receiving
+                                    start = time.time()
+                        else:
+                            time.sleep(0.01)
+                    except (serial.SerialException, OSError) as e:
+                        print(f"[Serial] ⚠ Serial read error: {e}")
+                        try:
+                            sp.close()
                         except Exception:
                             pass
-                    if got:
-                        start = time.time()
-                    else:
-                        time.sleep(0.01)
-                    if (time.time() - start) >= Config.SERIAL_READ_WINDOW_S:
+                        serial_port = None
+                        _connected_event.clear()
+                        lines = []
                         break
 
-                if callback:
-                    callback(lines)
-
-            except serial.SerialException as e:
-                print(f"[Serial] write/read error: {e}")
-                _connected_event.clear()
-                with _write_lock:
-                    serial_port = None
+            # Callback outside the lock
+            if callback:
+                callback(lines)
 
         finally:
             _command_queue.task_done()
 
 
 def _reconnect_loop() -> None:
+    """Reconnect loop similar to your other project."""
     while True:
-        with _write_lock:
-            sp = serial_port
+        sp = serial_port
         if not (sp and sp.is_open):
             print("[Serial] Attempting to reconnect...")
             try:
                 connect_serial()
             except Exception as e:
                 print(f"[Serial] Reconnect error: {e}")
-        time.sleep(Config.SERIAL_RECONNECT_PERIOD_S)
+        time.sleep(float(getattr(Config, "SERIAL_RECONNECT_PERIOD_S", 3.0)))
 
 
 def start_serial() -> None:
+    """Start worker + reconnect threads once, then connect if needed."""
     if not any(t.name == "serial-queue" and t.is_alive() for t in threading.enumerate()):
         threading.Thread(target=_process_queue, daemon=True, name="serial-queue").start()
     if not any(t.name == "serial-reconnect" and t.is_alive() for t in threading.enumerate()):
         threading.Thread(target=_reconnect_loop, daemon=True, name="serial-reconnect").start()
-    with _write_lock:
-        need_connect = not (serial_port and serial_port.is_open)
-    if need_connect:
+
+    sp = serial_port
+    if not (sp and sp.is_open):
         connect_serial()
 
 
-# -------------------------------------------------------------------
+# =============================================================================
 # Public API
-# -------------------------------------------------------------------
+# =============================================================================
 def send_gcode(command: str, timeout: float = 3.0) -> List[str]:
-    with _write_lock:
-        sp = serial_port
+    """
+    Enqueue a G-code (serialized write + small read window) and wait for its response.
+    Mirrors the working project's behavior.
+    """
+    sp = serial_port
     if not (sp and sp.is_open):
         print("[Serial] ⚠ No connection. Cannot send G-code.")
         return []
@@ -192,55 +233,84 @@ def send_gcode(command: str, timeout: float = 3.0) -> List[str]:
 
 
 def send_now(command: str) -> bool:
-    with _write_lock:
-        sp = serial_port
+    """
+    Immediate fire-and-forget write (no read). Safe to spam from UI.
+    Uses a separate lock so it won't starve the queue worker.
+    """
+    global serial_port
     try:
+        sp = serial_port
         if sp and sp.is_open:
-            with _send_now_lock:
+            with send_now_lock:
                 sp.write((command.strip() + "\n").encode("ascii", errors="ignore"))
                 sp.flush()
             return True
         print("[Serial] ⚠ Cannot send_now(): not connected.")
         return False
-    except (serial.SerialException, OSError) as e:
-        print(f"[Serial] send_now error: {e}")
+    except (serial.SerialException, serial.SerialTimeoutException, OSError) as e:
+        print(f"[Serial] ⚠ send_now error: {e}")
+        try:
+            sp.close()
+        except Exception:
+            pass
+        serial_port = None
         _connected_event.clear()
-        close_serial()
         return False
 
 
 def wait_for_motion_complete(timeout: float = 10.0) -> bool:
+    """
+    Issue M400 and watch for 'ok' in the incoming stream.
+    Kept simple—like the stable project. We clear stale input first to avoid false positives.
+    """
+    sp = serial_port
+    if not (sp and sp.is_open):
+        print("[Serial] ⚠ Cannot M400: not connected.")
+        return False
+
+    # Clear stale bytes BEFORE sending M400
+    try:
+        sp.reset_input_buffer()
+    except Exception:
+        pass
+
     if not send_now("M400"):
         return False
 
-    t0 = time.time()
-    while (time.time() - t0) < timeout:
-        with _write_lock:
-            sp = serial_port
+    start = time.time()
+    while time.time() - start < timeout:
+        sp = serial_port
         if sp and sp.in_waiting:
             try:
-                line = sp.readline().decode(errors="ignore").strip().lower()
-                if line and "ok" in line:
+                line = sp.readline().decode(errors="ignore").strip()
+                # print("[M400] ←", line)  # enable for debugging
+                if "ok" in line.lower():
                     return True
             except Exception:
-                pass
+                # Port died mid-wait
+                return False
         time.sleep(0.01)
-
     print("[Serial] ⚠ Timeout waiting for M400 ok")
     return False
 
 
 def get_position() -> List[str]:
+    """Return raw M114 response lines (firmware-dependent)."""
     return send_gcode("M114")
 
 
 def get_position_axis(axis: str) -> Optional[float]:
+    """
+    Extract a single axis value from M114 output. Handle 'X:0.00' and 'X 0.00' variants.
+    """
     lines = get_position()
     joined = " ".join(lines)
-    axis = axis.upper()
-    m = re.search(rf"\b{axis}:\s*(-?\d+\.?\d*)", joined)
+    ax = axis.upper()
+    m = re.search(rf"\b{ax}\s*:\s*(-?\d+(?:\.\d+)?)", joined, flags=re.IGNORECASE)
     if not m:
-        return None
+        m = re.search(rf"\b{ax}\s+(-?\d+(?:\.\d+)?)", joined, flags=re.IGNORECASE)
+        if not m:
+            return None
     try:
         return float(m.group(1))
     except Exception:

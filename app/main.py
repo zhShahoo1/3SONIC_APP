@@ -37,7 +37,12 @@ if __package__ is None or __package__ == "":
         send_gcode,
         wait_for_motion_complete,
     )
-    from app.core.keyboard_control import start_keyboard_listener, enable_keyboard
+    # keyboard is optional; keep best-effort start
+    try:
+        from app.core.keyboard_control import start_keyboard_listener, enable_keyboard
+    except Exception:
+        start_keyboard_listener = None  # type: ignore
+        enable_keyboard = lambda *_a, **_k: None  # type: ignore
 else:
     from .config import Config
     from .core import scanner_control as pssc
@@ -50,29 +55,27 @@ else:
         send_gcode,
         wait_for_motion_complete,
     )
-    from .core.keyboard_control import start_keyboard_listener, enable_keyboard
+    try:
+        from .core.keyboard_control import start_keyboard_listener, enable_keyboard
+    except Exception:
+        start_keyboard_listener = None  # type: ignore
+        enable_keyboard = lambda *_a, **_k: None  # type: ignore
 
-# ------------------------------------------------------------------------------
-# Force all paths to use the single, root-level static/ and templates/
-# ------------------------------------------------------------------------------
-PROJECT_ROOT = Path(__file__).resolve().parents[1]
-STATIC_FOLDER = (PROJECT_ROOT / "static").resolve()
-TEMPLATE_FOLDER = (PROJECT_ROOT / "templates").resolve()
-
-Config.BASE_DIR = PROJECT_ROOT
-Config.APP_DIR = PROJECT_ROOT.resolve()
-Config.STATIC_DIR = STATIC_FOLDER
-Config.TEMPLATES_DIR = TEMPLATE_FOLDER
-Config.DATA_DIR = (STATIC_FOLDER / "data").resolve()
+# Always have a reliable root (works in dev and PyInstaller due to Config)
+PROJECT_ROOT = Path(getattr(Config, "BASE_DIR", Path(__file__).resolve().parents[1]))
 
 # ------------------------------------------------------------------------------
 # Flask app
 # ------------------------------------------------------------------------------
-app = Flask(__name__, static_folder=str(STATIC_FOLDER), template_folder=str(TEMPLATE_FOLDER))
+app = Flask(
+    __name__,
+    static_folder=str(Config.STATIC_DIR),
+    template_folder=str(Config.TEMPLATES_DIR),
+)
 app.config.from_object(Config)
 
 # ------------------------------------------------------------------------------
-# Background services: serial + keyboard (best‑effort)
+# Background services: serial + keyboard (best-effort)
 # ------------------------------------------------------------------------------
 try:
     start_serial()
@@ -80,8 +83,9 @@ except Exception as e:
     print(f"[Serial] background start failed: {e}")
 
 try:
-    enable_keyboard(True)
-    start_keyboard_listener()
+    enable_keyboard(True)  # no-op if stubbed
+    if callable(start_keyboard_listener):
+        start_keyboard_listener()
 except Exception as e:
     print(f"[Keyboard] listener not started: {e}")
 
@@ -130,13 +134,16 @@ def _set_flag(path: Path, value: str) -> None:
         print(f"[flags] failed writing {path}: {e}")
 
 def _newest_data_folder_name() -> str:
-    subdirs = [p for p in Config.DATA_DIR.iterdir() if p.is_dir()]
-    if not subdirs:
+    try:
+        subdirs = [p for p in Config.DATA_DIR.iterdir() if p.is_dir()]
+        if not subdirs:
+            return ""
+        return sorted(subdirs, key=lambda p: p.name)[-1].name
+    except Exception:
         return ""
-    return sorted(subdirs, key=lambda p: p.name)[-1].name
 
 # ------------------------------------------------------------------------------
-# Insert Bath / Position‑for‑Scan (Config‑driven with defaults)
+# Insert Bath / Position-for-Scan (Config-driven with defaults)
 # ------------------------------------------------------------------------------
 def _wait_until_axis(
     axis: str,
@@ -209,7 +216,7 @@ def api_position_for_scan():
         return jsonify(success=False, message=str(e), status="Error"), 500
 
 # ------------------------------------------------------------------------------
-# Routes (original)
+# Routes (UI + streams + actions)
 # ------------------------------------------------------------------------------
 @app.route("/")
 def index():
@@ -236,8 +243,9 @@ def handle_open_itksnap():
 
 @app.route("/move_probe", methods=["POST"])
 def move_probe():
-    direction = request.json.get("direction")
-    step = float(request.json.get("step", 1))
+    data = request.get_json(silent=True) or {}
+    direction = data.get("direction")
+    step = float(data.get("step", 1))
 
     mapping = {
         "Xplus": lambda: pssc.deltaMove(step, "X"),
@@ -263,11 +271,12 @@ def move_probe():
 def initscanner():
     try:
         ok, msg = pssc.go2INIT()
-        if isinstance(ok, tuple):
-            ok, msg = ok
-        return jsonify(success=bool(ok), message=msg or "Initialized")
+        return jsonify(success=bool(ok), message=msg or "Initialized"), (200 if ok else 500)
     except Exception as e:
-        return jsonify(success=False, message=str(e)), 500
+        import traceback
+        tb = traceback.format_exc()
+        print("[/initscanner] Exception:\n", tb)
+        return jsonify(success=False, message=f"INIT crashed: {e}"), 500
 
 def _start_scan(multi: bool):
     scanning_f, multisweep_f, _ = _flag_paths()
@@ -310,6 +319,8 @@ def overview_image():
 # ------------------------------------------------------------------------------
 # Desktop launcher (pywebview) + fallback to browser
 # ------------------------------------------------------------------------------
+_UI_TITLE = "3SONIC 3D Ultrasound app"  # Keep consistent with Win32 dark-titlebar tweak
+
 def _launch_desktop():
     """
     Launch a native desktop window that hosts the Flask UI.
@@ -317,7 +328,7 @@ def _launch_desktop():
     url = "http://127.0.0.1:5000"
     if _HAS_WEBVIEW:
         window = webview.create_window(
-            title="3SONIC Scanner",
+            title=_UI_TITLE,
             url=url,
             width=380,
             height=680,
@@ -325,12 +336,12 @@ def _launch_desktop():
             min_size=(360, 620),
         )
 
-        # Optional: small Windows dark‑titlebar tweak
+        # Optional: small Windows dark-titlebar tweak
         if platform.system() == "Windows":
             try:
                 import ctypes
                 time.sleep(0.4)
-                hwnd = ctypes.windll.user32.FindWindowW(None, "3SONIC 3D Ultrasound app")
+                hwnd = ctypes.windll.user32.FindWindowW(None, _UI_TITLE)
                 if hwnd:
                     enabled = ctypes.c_int(1)
                     for attr in (19, 20):  # DWMWA_USE_IMMERSIVE_DARK_MODE (varies by Windows)
