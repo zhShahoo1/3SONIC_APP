@@ -2,7 +2,8 @@
 """
 Scanner control built on the shared serial singleton.
 
-Public API:
+Public API (used by Flask routes / UI):
+- jog_once(direction, step)                # ← used by /move_probe queue worker
 - deltaMove(delta, axis)
 - rotate_nozzle_clockwise(step=value)
 - rotate_nozzle_counterclockwise(step=value)
@@ -12,12 +13,12 @@ Public API:
 - get_position()                # returns list[str] (raw M114 lines)
 - get_position_axis(axis)       # Optional[float]
 
-Notes:
-- Manual jogs are pure-relative fire-and-forget (send_now), so rapid GUI clicks don't
-  contend with the queued read window in serial_manager.
+Design notes:
+- Manual jogs are pure-relative fire-and-forget (send_now) to avoid serial queue
+  contention during rapid keyboard repeats.
 - Feedrates/geometry/offsets come from Config.
 - E-axis absolute position is persisted on disk.
-- Includes legacy compatibility shims: connectprinter(), getresponse(), waitresponses(), returnresponses()
+- Homing/INIT sequence verifies positions via M114 with tolerance.
 """
 
 from __future__ import annotations
@@ -27,15 +28,27 @@ from pathlib import Path
 from typing import List, Optional, Tuple, Dict
 
 from app.config import Config
-from app.core.serial_manager import (
-    connect_serial,
-    send_gcode,
-    send_now,
-    wait_for_motion_complete,
-    get_position as _sm_get_position,
-    get_position_axis as _sm_get_position_axis,
-    connected_event,  # can be a function or an Event
-)
+
+# --- serial plumbing ---------------------------------------------------------
+# We import everything best-effort and stay resilient if some helpers
+# are not present on a given branch.
+try:
+    from app.core.serial_manager import (
+        start_serial,               # noqa: F401 (not used directly here)
+        send_gcode,
+        send_now,
+        wait_for_motion_complete,
+    )
+except Exception as e:  # pragma: no cover
+    raise RuntimeError(f"serial_manager not available: {e}")
+
+# Optional helpers (present in many variants of your serial_manager)
+try:
+    from app.core.serial_manager import connect_serial, connected_event  # type: ignore
+except Exception:  # pragma: no cover
+    connect_serial = lambda *a, **k: None  # type: ignore
+    connected_event = None  # type: ignore
+
 
 # =============================================================================
 # E-axis persistence (absolute 'E' position across processes)
@@ -74,17 +87,22 @@ def _connected_event_is_set() -> bool:
       - connected_event   -> threading.Event
     """
     try:
+        if connected_event is None:
+            return True  # assume managed by start_serial()
         ev = connected_event() if callable(connected_event) else connected_event
-        return bool(ev.is_set())
+        return bool(getattr(ev, "is_set", lambda: True)())
     except Exception:
-        return False
+        return True
 
 
 def _ensure_connected() -> bool:
     """Ensure we have a live serial connection; try once if not."""
     if _connected_event_is_set():
         return True
-    return connect_serial() is not None
+    try:
+        return connect_serial() is not None
+    except Exception:
+        return True  # tolerate if not available
 
 
 def _ensure_units_and_absolute() -> None:
@@ -135,18 +153,48 @@ def move_absolute(axis: str, position: float) -> bool:
 
 
 # =============================================================================
-# Public API used by Flask routes
+# Position queries (M114)
 # =============================================================================
 def get_position() -> List[str]:
-    """Raw M114 response lines (list[str])."""
-    return _sm_get_position()
+    """
+    Return raw M114 response lines (list[str]).
+    """
+    try:
+        return send_gcode("M114")
+    except Exception:
+        return []
+
+
+def _parse_m114(lines: List[str]) -> Dict[str, Optional[float]]:
+    """
+    Parse a variety of M114 formats (Marlin/RepRap).
+    Returns dict with X/Y/Z/E floats when found.
+    """
+    out: Dict[str, Optional[float]] = {"X": None, "Y": None, "Z": None, "E": None}
+    text = " ".join(lines)
+    # common tokens: "X:12.34 Y:56.78 Z:9.10 E:0.00", sometimes lowercase or spaced
+    for ax in ("X", "Y", "Z", "E"):
+        try:
+            # Split by 'Ax:' and read the next number
+            frag = text.split(f"{ax}:")[1].strip().split()[0]
+            out[ax] = float(frag)
+        except Exception:
+            pass
+    return out
 
 
 def get_position_axis(axis: str) -> Optional[float]:
     """Parsed X/Y/Z/E from M114."""
-    return _sm_get_position_axis(axis)
+    axis = axis.upper()
+    if axis not in ("X", "Y", "Z", "E"):
+        return None
+    parsed = _parse_m114(get_position())
+    return parsed.get(axis)
 
 
+# =============================================================================
+# Manual jogs
+# =============================================================================
 def deltaMove(delta: float, axis: str) -> bool:
     """
     Fast manual jog: pure-relative fire-and-forget.
@@ -171,7 +219,7 @@ def deltaMove(delta: float, axis: str) -> bool:
     return bool(ok)
 
 
-# Default E rotation step (fallback 0.1 mm/deg/step as appropriate for your setup)
+# Default E rotation step
 _E_DEFAULT_STEP = float(getattr(Config, "E_AXIS_DEFAULT_STEP", 0.1))
 
 
@@ -206,6 +254,35 @@ def rotate_nozzle_counterclockwise(step: float = _E_DEFAULT_STEP) -> Tuple[bool,
         return False, "Failed to rotate nozzle counterclockwise."
     except Exception as exc:
         return False, f"Rotate counterclockwise error: {exc}"
+
+
+def jog_once(direction: str, step: float) -> None:
+    """
+    One atomic jog command that matches frontend directions.
+
+    direction ∈ {
+        'Xplus','Xminus','Yplus','Yminus','Zplus','Zminus',
+        'rotateClockwise','rotateCounterclockwise'
+    }
+    """
+    if direction == "Xplus":
+        deltaMove(+step, "X")
+    elif direction == "Xminus":
+        deltaMove(-step, "X")
+    elif direction == "Yplus":
+        deltaMove(+step, "Y")
+    elif direction == "Yminus":
+        deltaMove(-step, "Y")
+    elif direction == "Zplus":
+        deltaMove(+step, "Z")
+    elif direction == "Zminus":
+        deltaMove(-step, "Z")
+    elif direction == "rotateClockwise":
+        rotate_nozzle_clockwise(step)
+    elif direction == "rotateCounterclockwise":
+        rotate_nozzle_counterclockwise(step)
+    else:
+        print(f"[jog_once] invalid direction: {direction}")
 
 
 # =============================================================================
@@ -257,7 +334,7 @@ def _home_sequence() -> Tuple[bool, str]:
 
 def go2INIT() -> Tuple[bool, str]:
     """
-    Initialize the probe to center, matching your old sequence:
+    Initialize the probe to center, matching your prior sequence:
       1) Home XYZ
       2) Move to X=0 Y=0 Z=10 at fast feed
       3) Move to center: X=OFFSET_X+X_MAX/2, Y=OFFSET_Y+Y_MAX/2, Z=OFFSET_Z+Z_MAX/2
@@ -352,16 +429,19 @@ def ScanPath() -> bool:
 
 
 # =============================================================================
-# Compatibility shims (legacy helpers)
+# Legacy compatibility shims
 # =============================================================================
 def connectprinter():
     """Legacy helper. Prefer the singleton. Returns the serial port or None."""
-    return connect_serial()
+    try:
+        return connect_serial()
+    except Exception:
+        return None
 
 
 def getresponse(_serialconn=None) -> bytes:
     """Legacy helper: return one 'line' from M114 as bytes."""
-    lines = _sm_get_position()
+    lines = get_position()
     first = (lines[0] if lines else "").encode("utf-8", errors="ignore")
     return first
 
@@ -373,11 +453,11 @@ def waitresponses(_serialconn=None, _mytext: str = "") -> bool:
 
 def returnresponses(_serialconn=None, _mytext: str = "") -> List[str]:
     """Legacy helper: return M114 lines."""
-    return _sm_get_position()
+    return get_position()
 
 
 # =============================================================================
-# Old demo helper (unchanged)
+# Simple demo util
 # =============================================================================
 def unknowns() -> None:
     try:

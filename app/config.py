@@ -86,7 +86,7 @@ class Config:
     BASE_DIR: Path = Path(_ENV_BASE).resolve() if _ENV_BASE else _candidate_base_dirs()[0]
 
     # The Python package location (always the /app folder where this file lives)
-    APP_DIR: Path = Path(__file__).resolve().parent.parent
+    APP_DIR: Path = Path(__file__).resolve().parent
 
     # Prefer project-root/static over app/static — do NOT create STATIC_DIR here
     _ENV_STATIC = os.environ.get("STATIC_DIR")

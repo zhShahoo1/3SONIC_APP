@@ -4,6 +4,7 @@ from __future__ import annotations
 import os
 import sys
 import time
+import queue
 import threading
 import subprocess as sp
 from pathlib import Path
@@ -38,9 +39,8 @@ if __package__ is None or __package__ == "":
         send_now,
         send_gcode,
         wait_for_motion_complete,
-        close_serial,          # <-- added
+        close_serial,
     )
-    # keyboard is optional; keep best-effort start
     try:
         from app.core.keyboard_control import start_keyboard_listener, enable_keyboard
     except Exception:
@@ -57,7 +57,7 @@ else:
         send_now,
         send_gcode,
         wait_for_motion_complete,
-        close_serial,          # <-- added
+        close_serial,
     )
     try:
         from .core.keyboard_control import start_keyboard_listener, enable_keyboard
@@ -97,18 +97,24 @@ except Exception as e:
 # Ultrasound live stream bootstrap (resilient if probe/DLL missing)
 # ------------------------------------------------------------------------------
 def _init_ultrasound() -> Tuple[int, int, Tuple[float, float]]:
+    """Initialize ultrasound once at startup; not fatal if missing."""
     try:
         w, h, res = ultrasound_sdk.initialize_ultrasound()
         print(f"[startup] Ultrasound ready: {w}x{h}, res={res}")
         return w, h, res
     except Exception as e:
         print(f"[startup] Ultrasound init warning: {e}")
+        # Provide a default so the rest of the app still runs
         return (1024, 1024, (0.0, 0.0))
 
 _UL_W, _UL_H, _UL_RES = _init_ultrasound()
 
 def _ultrasound_mjpeg_stream() -> Iterable[bytes]:
-    """Never returns; yields placeholders while waiting for a probe."""
+    """
+    Continuous MJPEG generator.
+    If the ultrasound generator errors (e.g., cable unplugged), we back off a bit
+    and keep retrying forever so the front-end 'error' handler can reload.
+    """
     while True:
         try:
             for frame in ultrasound_sdk.generate_image():
@@ -116,10 +122,10 @@ def _ultrasound_mjpeg_stream() -> Iterable[bytes]:
                     b"--frame\r\n"
                     b"Content-Type: image/jpeg\r\n\r\n" + frame + b"\r\n\r\n"
                 )
-            # If the generator exhausted (it shouldn't), restart next loop turn
+            # If generator ever returns (it shouldn't), loop and restart
         except Exception as e:
             print(f"[ultrasound stream] error (will retry): {e}")
-            time.sleep(0.5)  # tiny backoff and retry
+            time.sleep(0.5)  # backoff before retry
 
 # ------------------------------------------------------------------------------
 # Flag helpers
@@ -234,15 +240,32 @@ def ultrasound_video_feed():
 
 @app.route("/api/us-restart", methods=["POST"])
 def api_us_restart():
+    """
+    Attempt to recover ultrasound after cable reconnection:
+      - close existing DLL/session
+      - small delay to let OS re-enumerate
+      - re-init the ultrasound stack
+    """
     try:
-        ultrasound_sdk.reset()
-        # give it a moment to release the device in the OS
-        time.sleep(0.2)
+        try:
+            ultrasound_sdk.freeze()
+        except Exception:
+            pass
+        try:
+            ultrasound_sdk.stop()
+        except Exception:
+            pass
+        try:
+            ultrasound_sdk.close()
+        except Exception:
+            pass
+
+        time.sleep(0.3)
         ultrasound_sdk.initialize_ultrasound()
         return jsonify(success=True, message="Ultrasound restarted")
     except Exception as e:
         return jsonify(success=False, message=str(e)), 500
-    
+
 @app.route("/video_feed")
 def video_feed():
     return Response(
@@ -255,31 +278,43 @@ def handle_open_itksnap():
     success, message = open_itksnap_with_dicom_series()
     return jsonify(success=success, message=message)
 
+# ------------------------------------------------------------------------------
+# Keyboard-friendly jog handling
+# - Frontend enqueues /move_probe requests at a steady pace while key is held
+# - Here we push them into a background worker that calls pssc.jog_once()
+# ------------------------------------------------------------------------------
+_JOG_Q: "queue.Queue[tuple[str, float]]" = queue.Queue(maxsize=64)
+
+def _jog_worker():
+    while True:
+        direction, step = _JOG_Q.get()
+        try:
+            pssc.jog_once(direction, step)  # implement in scanner_control.py
+        except Exception as e:
+            print("[jog worker] error:", e)
+        finally:
+            _JOG_Q.task_done()
+
+threading.Thread(target=_jog_worker, daemon=True).start()
+
 @app.route("/move_probe", methods=["POST"])
 def move_probe():
     data = request.get_json(silent=True) or {}
     direction = data.get("direction")
     step = float(data.get("step", 1))
 
-    mapping = {
-        "Xplus": lambda: pssc.deltaMove(step, "X"),
-        "Xminus": lambda: pssc.deltaMove(-step, "X"),
-        "Yplus": lambda: pssc.deltaMove(step, "Y"),
-        "Yminus": lambda: pssc.deltaMove(-step, "Y"),
-        "Zplus": lambda: pssc.deltaMove(step, "Z"),
-        "Zminus": lambda: pssc.deltaMove(-step, "Z"),
-        "rotateClockwise": lambda: pssc.rotate_nozzle_clockwise(step),
-        "rotateCounterclockwise": lambda: pssc.rotate_nozzle_counterclockwise(step),
+    allowed = {
+        "Xplus","Xminus","Yplus","Yminus","Zplus","Zminus",
+        "rotateClockwise","rotateCounterclockwise"
     }
-
-    if direction not in mapping:
+    if direction not in allowed:
         return jsonify(success=False, message="Invalid direction"), 400
 
     try:
-        result = mapping[direction]()
-        return jsonify(success=True, message=f"Moved {direction} by {step}", result=str(result))
-    except Exception as e:
-        return jsonify(success=False, message=str(e)), 500
+        _JOG_Q.put_nowait((direction, step))
+        return jsonify(success=True, message=f"queued {direction} {step}")
+    except queue.Full:
+        return jsonify(success=False, message="Jog queue full"), 429
 
 @app.route("/initscanner")
 def initscanner():
@@ -326,9 +361,74 @@ def scanpath():
 def multipath():
     return _start_scan(multi=True)
 
+# Legacy hook (button now opens a picker, but keep this endpoint harmless)
 @app.route("/overViewImage", methods=["POST"])
 def overview_image():
     return jsonify(success=True, message="Overview requested")
+
+# ------------------------------------------------------------------------------
+# Overview PNG picker/list + open (for the Overview Image button)
+# ------------------------------------------------------------------------------
+def _open_native(path: Path) -> None:
+    """Open file with the OS default image viewer."""
+    if platform.system() == "Windows":
+        os.startfile(str(path))  # type: ignore[attr-defined]
+    elif platform.system() == "Darwin":
+        sp.Popen(["open", str(path)])
+    else:
+        sp.Popen(["xdg-open", str(path)])
+
+@app.route("/api/overview/list")
+def api_overview_list():
+    """
+    Return a list of scans that contain Example_slices.png
+    JSON: { success: bool, items: [ {folder, png_url, created}, ... ] }
+    """
+    try:
+        n = int(request.args.get("limit", "50"))
+    except ValueError:
+        n = 50
+
+    data_dir = Config.DATA_DIR
+    items = []
+    try:
+        # newest first (folder names are timestamps)
+        for p in sorted([d for d in data_dir.iterdir() if d.is_dir()],
+                        key=lambda x: x.name, reverse=True):
+            png = p / "Example_slices.png"
+            if png.exists():
+                items.append({
+                    "folder": p.name,
+                    "png_url": f"/static/data/{p.name}/Example_slices.png",
+                    "created": png.stat().st_mtime
+                })
+            if len(items) >= n:
+                break
+    except Exception as e:
+        return jsonify(success=False, message=str(e), items=[]), 500
+
+    return jsonify(success=True, items=items)
+
+@app.route("/api/overview/open", methods=["POST"])
+def api_overview_open():
+    """
+    Open Example_slices.png for a given scan folder in the OS viewer.
+    Body: { "folder": "<timestamp-folder>" }
+    """
+    data = request.get_json(silent=True) or {}
+    folder = (data.get("folder") or "").strip()
+    if not folder:
+        return jsonify(success=False, message="Missing 'folder'."), 400
+
+    png_path = (Config.DATA_DIR / folder / "Example_slices.png").resolve()
+    if not png_path.exists():
+        return jsonify(success=False, message="Overview PNG not found."), 404
+
+    try:
+        _open_native(png_path)
+        return jsonify(success=True)
+    except Exception as e:
+        return jsonify(success=False, message=str(e)), 500
 
 # ------------------------------------------------------------------------------
 # Graceful Exit API
@@ -338,9 +438,6 @@ _WEBVIEW_WINDOW = None  # type: ignore
 
 def _graceful_shutdown_async():
     """Best-effort cleanup, then terminate the process."""
-    import os
-    import time
-
     global _APP_SHUTTING_DOWN
     if _APP_SHUTTING_DOWN:
         return
@@ -361,21 +458,19 @@ def _graceful_shutdown_async():
 
         # 2) Ultrasound: freeze/stop/close (ignore errors)
         try:
-            from app.core import ultrasound_sdk as _us
-            try: _us.freeze()
+            try: ultrasound_sdk.freeze()
             except Exception: pass
-            try: _us.stop()
+            try: ultrasound_sdk.stop()
             except Exception: pass
-            try: _us.close()
+            try: ultrasound_sdk.close()
             except Exception: pass
         except Exception as e:
             print("[Shutdown] ultrasound close error:", e)
 
         # 3) Webcam: release camera if present
         try:
-            from app.utils.webcam import camera as _cam
-            if hasattr(_cam, "release"):
-                _cam.release()
+            if hasattr(camera, "release"):
+                camera.release()
         except Exception as e:
             print("[Shutdown] webcam release error:", e)
 
@@ -398,8 +493,7 @@ def _graceful_shutdown_async():
         # 6) Close the desktop window if we’re in pywebview
         if _HAS_WEBVIEW:
             try:
-                # Thread-safe in recent pywebview
-                webview.destroy_window()
+                webview.destroy_window()  # thread-safe in recent pywebview
             except Exception as e1:
                 print("[Shutdown] destroy_window error:", e1)
                 try:
@@ -415,12 +509,11 @@ def _graceful_shutdown_async():
         # Use hard exit to avoid hanging threads (keyboard hooks, webview loop, etc.)
         os._exit(0)
 
-
 @app.route("/api/exit", methods=["POST"])
 def api_exit():
     """
-    Frontend should show a confirm() first, then POST here.
-    This returns immediately while cleanup runs in a thread.
+    Frontend shows a confirm() first, then POSTs here.
+    We return immediately while cleanup runs in a thread.
     """
     threading.Thread(target=_graceful_shutdown_async, daemon=True).start()
     return jsonify(success=True, message="Shutting down...")

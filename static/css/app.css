@@ -1,418 +1,9 @@
 /* ==========================================================================
-   3SONIC – Modern Nordic Dark Theme (Montserrat Light + uniform buttons + thin footer)
-   ========================================================================== */
-
-*,
-*::before,
-*::after { box-sizing: border-box; margin: 0; padding: 0; }
-
-/* ---- Typography ---- */
-:root {
-  --font-ui: 'Montserrat', 'Segoe UI', system-ui, -apple-system, sans-serif;
-}
-
-html, body {
-  height: 100%;
-  font-family: var(--font-ui);
-  font-weight: 300;            /* Montserrat Light */
-  letter-spacing: 0.2px;
-  background: var(--bg-dark);
-  color: var(--text);
-  line-height: 1.5;
-  display: flex;
-  flex-direction: column;
-  overflow: hidden;
-}
-
-/* ---- Nordic Theme Colors ---- */
-:root{
-  /* Base colors - Inspired by Nordic landscapes */
-  --midnight-blue: #2E3440;      /* Dark blue-gray (night sky) */
-  --deep-fjord: #3B4252;         /* Medium blue-gray (deep water) */
-  --arctic-dawn: #434C5E;        /* Lighter blue-gray (dawn sky) */
-  --snow-shadow: #4C566A;        /* Blue-gray (snow in shadow) */
-  
-  /* Accent colors - Nordic nature inspiration */
-  --nordic-frost: #8FBCBB;       /* Soft teal (frost on glass) */
-  --aurora-green: #A3BE8C;       /* Muted green (northern lights) */
-  --fjord-blue: #81A1C1;         /* Soft blue (fjord waters) */
-  --berry-red: #BF616A;          /* Deep red (northern berries) */
-  --polar-sun: #D08770;          /* Warm orange (midnight sun) */
-  --glacier-yellow: #EBCB8B;     /* Pale yellow (glacier reflection) */
-  
-  /* UI Application */
-  --bg-dark: var(--midnight-blue);
-  --bg-card: rgba(59, 66, 82, 0.85); /* --deep-fjord with transparency */
-  --bg-header: #2a303c;
-
-  /* Font colors */
-  --primary: #ECEFF4;           /* Bright white (snow) for headings */
-  --text: #E5E9F0;              /* Off-white (moonlight) for text */
-  --text-dim: #D8DEE9;          /* Light gray (twilight) for dim text */
-
-  --border: rgba(143, 188, 187, 0.15); /* --nordic-frost with transparency */
-  --glass-border: rgba(143, 188, 187, 0.1);
-
-  --radius: 12px; 
-  --radius-sm: 8px;
-  --shadow: 0 8px 32px rgba(0, 0, 0, 0.4);
-  --shadow-sm: 0 4px 16px rgba(0, 0, 0, 0.3);
-  --transition: all 0.25s ease;
-}
-
-/* ----------------------------- Layout ----------------------------- */
-
-header{
-  background: var(--bg-header);
-  display: flex; 
-  align-items: center; 
-  justify-content: space-between;
-  padding: 0.6rem 1rem;
-  box-shadow: var(--shadow);
-  z-index: 10;
-  border-bottom: 1px solid var(--border);
-}
-
-header .logo{ 
-  height: 42px; 
-  object-fit: contain; 
-  filter: brightness(1.2) hue-rotate(5deg); 
-}
-
-nav ul{ 
-  display: flex; 
-  gap: 0.6rem; 
-  list-style: none; 
-}
-
-main{
-  flex: 1;
-  display: grid;
-  grid-template-columns: 300px 1fr 300px;
-  gap: 1.25rem;
-  padding: 1.25rem;
-  overflow: hidden;
-}
-
-/* ultra-thin footer */
-footer{
-  background: var(--bg-header);
-  padding: 0.25rem 0.75rem;      /* thinner */
-  min-height: 32px;              /* compact footer */
-  font-size: 0.72rem;
-  display: flex; 
-  justify-content: space-between; 
-  align-items: center;
-  border-top: 1px solid var(--border);
-}
-footer p{ color: var(--text-dim); }
-
-/* ----------------------------- Cards ----------------------------- */
-
-.card, .scanner-controls, .rendering-controls{
-  background: var(--bg-card);
-  border-radius: var(--radius);
-  box-shadow: var(--shadow);
-  padding: 1.25rem;
-  border: 1px solid var(--glass-border);
-  backdrop-filter: blur(12px);
-  -webkit-backdrop-filter: blur(12px);
-}
-
-.scanner-display .card{
-  padding: 0; 
-  overflow: hidden; 
-  display: flex; 
-  flex-direction: column;
-}
-
-.card-header{
-  padding: 1rem 1.25rem;
-  border-bottom: 1px solid var(--border);
-  font-weight: 300;             /* keep Light weight */
-  color: var(--nordic-frost);   /* Use Nordic frost color for headers */
-  display: flex; 
-  align-items: center; 
-  gap: 0.5rem;
-}
-
-.card-content{ flex: 1; padding: 1.25rem; }
-
-.scanner-display .card-image{
-  display: flex; 
-  justify-content: center; 
-  align-items: center;
-  background: rgba(46, 52, 64, 0.5); /* --midnight-blue with transparency */ 
-  border-radius: 8px; 
-  overflow: hidden; 
-  height: 100%;
-}
-
-.dispimg_us{ 
-  max-width: 100%; 
-  max-height: 75vh; 
-  object-fit: contain; 
-  transition: transform 0.3s ease; 
-}
-.dispimg_us:hover{ transform: scale(1.02); }
-
-/* ----------------------------- Buttons (UNIFIED STYLE) ------------ */
-
-.button{
-  /* Nordic-inspired button style */
-  background: linear-gradient(to bottom, var(--arctic-dawn), var(--deep-fjord));
-  color: var(--text);
-  border: 1px solid var(--glass-border);
-  border-radius: var(--radius-sm);
-  padding: 0.7rem 1rem;
-  font-size: 0.9rem;
-  font-weight: 300;             /* Light */
-  cursor: pointer;
-  transition: var(--transition);
-  display: flex; 
-  align-items: center; 
-  justify-content: center;
-  gap: 0.5rem; 
-  width: 100%;
-}
-.button:hover{
-  background: linear-gradient(to bottom, var(--snow-shadow), var(--arctic-dawn));
-  border-color: var(--nordic-frost);
-  transform: translateY(-2px);
-  box-shadow: 0 4px 12px rgba(143, 188, 187, 0.2);
-}
-.button:active{ transform: translateY(0); }
-.button:disabled, .button.is-loading{ opacity: 0.6; pointer-events: none; }
-
-/* Primary action buttons with Nordic accent */
-.start-scan-button,
-.multi-path-button{
-  background: linear-gradient(to bottom, var(--fjord-blue), var(--deep-fjord));
-  border-color: rgba(129, 161, 193, 0.3);
-  box-shadow:
-    inset 0 1px 0 rgba(255, 255, 255, 0.1),
-    inset 0 -1px 0 rgba(0, 0, 0, 0.3);
-}
-.start-scan-button:hover,
-.multi-path-button:hover {
-  background: linear-gradient(to bottom, #8fb1d3, var(--fjord-blue));
-  border-color: var(--fjord-blue);
-}
-
-/* Make Start Scan + Dual Sweep match axis buttons with stronger borders */
-.axis-style{
-  border: 1px solid rgba(143, 188, 187, 0.3);
-  box-shadow:
-    inset 0 1px 0 rgba(255, 255, 255, 0.08),
-    inset 0 -1px 0 rgba(0, 0, 0, 0.3);
-}
-.axis-style:hover{
-  border-color: var(--nordic-frost);
-}
-
-/* Exit button with Nordic berry accent */
-.exit-button{ 
-  width: auto; 
-  padding: 0.45rem 0.85rem; 
-  background: linear-gradient(to bottom, var(--snow-shadow), var(--deep-fjord));
-}
-.exit-button:hover{ 
-  background: linear-gradient(to bottom, var(--berry-red), #a84d56);
-  box-shadow: 0 0 0 2px rgba(191, 97, 106, 0.3);
-}
-
-/* Header toggle buttons */
-.icon-button{
-  display: flex; 
-  align-items: center; 
-  gap: 0.5rem;
-  padding: 0.55rem 0.9rem; 
-  width: auto;
-  background: linear-gradient(to bottom, var(--arctic-dawn), var(--deep-fjord));
-  color: var(--text);
-  border: 1px solid var(--glass-border);
-  border-radius: var(--radius-sm);
-  transition: var(--transition);
-}
-.icon-button img.icon{ 
-  height: 20px; 
-  width: 20px; 
-  filter: brightness(1.4); 
-}
-.icon-button:hover{
-  background: linear-gradient(to bottom, var(--snow-shadow), var(--arctic-dawn));
-  border-color: var(--nordic-frost);
-  transform: translateY(-2px);
-  box-shadow: var(--shadow-sm);
-}
-.icon-button.active{ 
-  outline: 2px solid var(--nordic-frost); 
-  background: linear-gradient(to bottom, var(--arctic-dawn), var(--snow-shadow));
-}
-
-/* ----------------------------- Controls ----------------------------- */
-
-.scan-buttons{
-  display: grid; 
-  grid-template-columns: 1fr 1fr;
-  gap: 0.75rem; 
-  margin-bottom: 1.5rem;
-}
-
-.automatic-controls, .manual-adjustments, .rendering-controls{ 
-  margin-top: 1.5rem; 
-}
-
-.automatic-controls h2, .manual-adjustments h2, .rendering-controls h2{
-  font-size: 1rem; 
-  font-weight: 300; 
-  color: var(--nordic-frost);
-  margin-bottom: 1rem; 
-  display: flex; 
-  align-items: center; 
-  gap: 0.5rem;
-}
-.automatic-controls h2::before,
-.manual-adjustments h2::before,
-.rendering-controls h2::before{
-  content: ""; 
-  display: block; 
-  width: 4px; 
-  height: 16px; 
-  background: var(--nordic-frost); 
-  border-radius: 2px;
-}
-
-/* D-Pad */
-.dpad{
-  display: grid;
-  grid-template-columns: 48px 1fr 48px;
-  grid-template-rows: 42px 48px 42px;
-  gap: 6px; 
-  align-items: center; 
-  justify-items: center;
-  max-width: 260px; 
-  margin: 0.5rem auto 1rem;
-}
-.dpad-btn i{ font-size: 1.1rem; }
-.dpad-up, .dpad-left, .dpad-right, .dpad-down{
-  background: linear-gradient(to bottom, var(--arctic-dawn), var(--deep-fjord));
-  color: var(--text);
-  border: 1px solid var(--glass-border);
-  border-radius: var(--radius-sm);
-  width: 100%;
-  height: 100%;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  transition: var(--transition);
-}
-.dpad-up:hover, .dpad-left:hover, .dpad-right:hover, .dpad-down:hover {
-  background: linear-gradient(to bottom, var(--snow-shadow), var(--arctic-dawn));
-  border-color: var(--nordic-frost);
-}
-
-/* Z buttons row */
-.z-row{
-  display: grid; 
-  grid-template-columns: 1fr 1fr;
-  gap: 0.5rem; 
-  max-width: 260px; 
-  margin: 0 auto 0.75rem;
-}
-.z-btn{ height: 42px; font-size: 0.85rem; }
-
-/* Rotation buttons side-by-side */
-.rotation-row{ 
-  display: flex; 
-  gap: 0.5rem; 
-  justify-content: center; 
-}
-
-/* ----------------------------- Modal ----------------------------- */
-
-.modal{
-  position: fixed; 
-  inset: 0; 
-  background: rgba(46, 52, 64, 0.9); /* --midnight-blue with transparency */
-  display: none; 
-  place-items: center; 
-  z-index: 1000;
-  backdrop-filter: blur(4px); 
-  -webkit-backdrop-filter: blur(4px);
-}
-.modal-content{
-  background: var(--bg-card); 
-  padding: 2rem; 
-  border-radius: var(--radius);
-  box-shadow: var(--shadow); 
-  color: var(--text); 
-  text-align: center;
-  border: 1px solid var(--glass-border); 
-  max-width: 400px; 
-  width: 90%;
-}
-
-/* ----------------------------- Responsive ----------------------------- */
-
-@media (max-width: 1200px){
-  main{ grid-template-columns: 250px 1fr; }
-  .rendering-controls{ grid-column: span 2; margin-top: 1rem; }
-}
-@media (max-width: 900px){
-  main{ grid-template-columns: 1fr; gap: 1rem; }
-  .scanner-controls, .rendering-controls{ order: -1; }
-}
-@media (max-width: 600px){
-  main{ padding: 1rem; }
-  .card, .scanner-controls, .rendering-controls{ padding: 1rem; }
-  .button{ padding: 0.6rem 0.75rem; font-size: 0.85rem; }
-  .scan-buttons{ grid-template-columns: 1fr; }
-  .dpad{ 
-    grid-template-columns: 56px 1fr 56px; 
-    grid-template-rows: 48px 56px 48px; 
-    gap: 8px; 
-    max-width: 300px; 
-  }
-  .z-btn{ height: 44px; }
-}
-
-/* ----------------------------- Additional Nordic Elements ----------------------------- */
-
-/* Add subtle Nordic pattern to background */
-body::after {
-  content: "";
-  position: fixed;
-  top: 0;
-  left: 0;
-  right: 0;
-  bottom: 0;
-  background-image: 
-    radial-gradient(circle at 10% 20%, rgba(143, 188, 187, 0.03) 0px, transparent 1px),
-    radial-gradient(circle at 30% 60%, rgba(143, 188, 187, 0.03) 0px, transparent 1px),
-    radial-gradient(circle at 70% 40%, rgba(143, 188, 187, 0.03) 0px, transparent 1px);
-  background-size: 200px 200px;
-  pointer-events: none;
-  z-index: -1;
-}
-
-/* Selection color matches Nordic theme */
-::selection {
-  background-color: rgba(129, 161, 193, 0.3); /* --fjord-blue with transparency */
-  color: var(--text);
-}
-
-/* Scrollbar styling */
-::-webkit-scrollbar {
-  width: 10px;
-}
-
-::-webkit-scrollbar-track {/* ==========================================================================
    3SONIC – Modern Nordic Dark Theme
-   - Clean typography (Montserrat Light)
-   - Glass cards, unified buttons, compact footer
-   - Stream status overlay + global loading spinner
-   - Accessible focus states & responsive layout
+   - Montserrat Light typography
+   - Glassy cards, unified buttons, compact footer
+   - Correct stream sizing for #im1 (ultrasound) & #im2 (camera)
+   - Stream status overlay + accessible focus states
    ========================================================================== */
 
 /* ------------------------------ Reset ------------------------------------ */
@@ -424,12 +15,12 @@ body { margin: 0; }
 /* --------------------------- Theme Tokens --------------------------------- */
 :root{
   /* Palette — Nordic-inspired */
-  --midnight-blue: #2E3440;   /* base background */
-  --deep-fjord:    #3B4252;   /* surfaces */
-  --arctic-dawn:   #434C5E;   /* raised surfaces */
-  --snow-shadow:   #4C566A;   /* borders / hovers */
+  --midnight-blue: #2E3440;
+  --deep-fjord:    #3B4252;
+  --arctic-dawn:   #434C5E;
+  --snow-shadow:   #4C566A;
 
-  --nordic-frost:  #8FBCBB;   /* accent */
+  --nordic-frost:  #8FBCBB;
   --aurora-green:  #A3BE8C;
   --fjord-blue:    #81A1C1;
   --berry-red:     #BF616A;
@@ -438,7 +29,7 @@ body { margin: 0; }
 
   /* App roles */
   --bg-dark:   var(--midnight-blue);
-  --bg-card:   rgba(59,66,82,.82);       /* glassy card */
+  --bg-card:   rgba(59,66,82,.85);
   --bg-header: #2a303c;
 
   --text:      #E5E9F0;
@@ -449,19 +40,23 @@ body { margin: 0; }
   --glass-border:  rgba(143,188,187,.12);
 
   --radius:    12px;
-  --radius-sm: 9px;
+  --radius-sm: 8px;
 
-  --shadow:    0 12px 38px rgba(0,0,0,.45);
-  --shadow-sm: 0 6px 18px rgba(0,0,0,.35);
+  --shadow:    0 10px 32px rgba(0,0,0,.4);
+  --shadow-sm: 0 4px 16px rgba(0,0,0,.3);
 
-  --focus:     0 0 0 3px rgba(129,161,193,.45); /* fjord-blue glow */
-
-  --transition: all .22s ease;
+  --focus:     0 0 0 3px rgba(129,161,193,.45);
+  --transition: all .25s ease;
 
   /* Typography */
   --font-ui: 'Montserrat', 'Segoe UI', system-ui, -apple-system, sans-serif;
   --weight-light: 300;
   --weight-medium: 500;
+
+  /* Stream layout helpers */
+  --header-h: 56px;       /* adjust if your header height changes */
+  --footer-h: 32px;       /* adjust if your footer height changes */
+  --view-padding: 24px;   /* padding around image in the viewer */
 }
 
 /* ----------------------------- Base -------------------------------------- */
@@ -490,10 +85,7 @@ body::after{
   z-index: -1;
 }
 
-::selection{
-  background: rgba(129,161,193,.28);
-  color: var(--text);
-}
+::selection{ background: rgba(129,161,193,.28); color: var(--text); }
 
 /* ----------------------------- Layout ------------------------------------ */
 header{
@@ -504,9 +96,7 @@ header{
   box-shadow: var(--shadow);
   z-index: 10;
 }
-header .logo{
-  height: 42px; object-fit: contain; filter: brightness(1.12) hue-rotate(5deg);
-}
+header .logo{ height: 42px; object-fit: contain; filter: brightness(1.12) hue-rotate(5deg); }
 nav ul{ list-style: none; display: flex; gap: .6rem; margin: 0; padding: 0; }
 
 main{
@@ -521,7 +111,7 @@ main{
 footer{
   background: var(--bg-header);
   padding: .28rem .75rem;
-  min-height: 32px;
+  min-height: var(--footer-h);
   font-size: .72rem;
   display: flex; align-items: center; justify-content: space-between;
   border-top: 1px solid var(--border);
@@ -534,35 +124,49 @@ footer p{ color: var(--text-dim); margin: 0; }
   border: 1px solid var(--glass-border);
   border-radius: var(--radius);
   box-shadow: var(--shadow);
-  padding: 1.2rem;
+  padding: 1.25rem;
   backdrop-filter: blur(12px);
   -webkit-backdrop-filter: blur(12px);
 }
+
 .card-header{
-  padding: 1rem 1.2rem;
+  padding: 1rem 1.25rem;
   border-bottom: 1px solid var(--border);
   color: var(--nordic-frost);
   font-weight: var(--weight-light);
   display: flex; align-items: center; gap: .55rem;
 }
-.card-content{ padding: 1.1rem 1.2rem; }
+.card-content{ padding: 1.1rem 1.25rem; }
 
-.scanner-display .card{ padding: 0; display: flex; flex-direction: column; overflow: hidden; }
+/* Stream container card */
+.scanner-display .card{
+  padding: 0;
+  display: flex; flex-direction: column;
+  overflow: visible; /* allow image to size naturally */
+}
 .scanner-display .card-image{
   display: flex; align-items: center; justify-content: center;
   background: rgba(46,52,64,.5);
-  border-radius: 8px; overflow: hidden; height: 100%;
+  border-radius: 8px;
+  overflow: auto;                 /* allow scroll if needed */
+  height: 100%;
+  padding: var(--view-padding);   /* space around image */
 }
 
-/* Stream image */
-.dispimg_us{
+/* -------------------------- Stream Images -------------------------------- */
+/* Ensure both #im1 (ultrasound) and #im2 (camera) fill the space without cropping */
+#im1, #im2{
   display: block;
-  max-width: 100%;
-  max-height: 75vh;
+  width: 100% !important;
+  height: auto !important;
+  max-height: calc(100vh - var(--header-h) - var(--footer-h) - (2 * var(--view-padding)) - 64px);
   object-fit: contain;
-  transition: transform .28s ease;
 }
-.dispimg_us:hover{ transform: scale(1.02); }
+.dispimg_us:hover{ transform: none; } /* disable zoom on live feeds */
+
+/* Wrapper if you overlay status on top of the stream */
+.stream-wrap{ position: relative; }
+.stream-wrap > img{ display: block; width: 100%; height: auto; }
 
 /* ---------------------------- Buttons ------------------------------------ */
 .button{
@@ -587,7 +191,7 @@ footer p{ color: var(--text-dim); margin: 0; }
 .button:active{ transform: translateY(0); }
 .button:disabled, .button.is-loading{ opacity: .6; pointer-events: none; }
 
-/* Stronger “action” buttons */
+/* Strong primary buttons */
 .start-scan-button, .multi-path-button{
   background: linear-gradient(to bottom, var(--fjord-blue), var(--deep-fjord));
   border-color: rgba(129,161,193,.35);
@@ -620,7 +224,7 @@ footer p{ color: var(--text-dim); margin: 0; }
   box-shadow: 0 0 0 2px rgba(191,97,106,.32);
 }
 
-/* Header toggle buttons */
+/* Header toggle (Ultrasound / Camera) */
 .icon-button{
   display: inline-flex; align-items: center; gap: .5rem;
   padding: .56rem .92rem;
@@ -643,9 +247,6 @@ footer p{ color: var(--text-dim); margin: 0; }
   background: linear-gradient(to bottom, var(--arctic-dawn), var(--snow-shadow));
 }
 
-/* Keyboard/step safety highlight */
-.danger-step{ border: 2px solid #fa5252; background: #fff5f5; }
-
 /* ---------------------------- Controls ----------------------------------- */
 .scan-buttons{
   display: grid; grid-template-columns: 1fr 1fr; gap: .75rem; margin-bottom: 1.5rem;
@@ -654,7 +255,7 @@ footer p{ color: var(--text-dim); margin: 0; }
 
 .automatic-controls h2, .manual-adjustments h2, .rendering-controls h2{
   font-size: 1rem; font-weight: var(--weight-light); color: var(--nordic-frost);
-  margin: 0 0 1rem 0; display: flex; align-items: center; gap: .6rem;
+  margin: 0 0 1rem; display: flex; align-items: center; gap: .6rem;
 }
 .automatic-controls h2::before,
 .manual-adjustments h2::before,
@@ -692,7 +293,7 @@ footer p{ color: var(--text-dim); margin: 0; }
 .rotation-row{ display: flex; gap: .5rem; justify-content: center; }
 
 /* Inputs */
-input[type="number"], select, .select{
+input[type="number"], select{
   background: linear-gradient(to bottom, var(--deep-fjord), var(--arctic-dawn));
   color: var(--text);
   border: 1px solid var(--glass-border);
@@ -706,6 +307,9 @@ input[type="number"]:focus, select:focus{
   border-color: var(--nordic-frost);
   box-shadow: var(--focus);
 }
+
+/* Safety cue for big step sizes (toggled via JS) */
+.danger-step{ border: 2px solid #fa5252; background: #fff5f5; }
 
 /* ----------------------------- Modal ------------------------------------- */
 .modal{
@@ -729,9 +333,6 @@ input[type="number"]:focus, select:focus{
 }
 
 /* ----------------------- Stream Status Overlay --------------------------- */
-.stream-wrap{ position: relative; display: inline-block; }
-.stream-wrap > img{ display: block; max-width: 100%; height: auto; }
-
 .status-overlay{
   position: absolute; inset: 0;
   display: flex; align-items: center; justify-content: center;
@@ -742,7 +343,7 @@ input[type="number"]:focus, select:focus{
 .status-overlay.hidden{ display: none; }
 
 .status-card{
-  min-width: 280px; max-width: 440px;
+  min-width: 280px; max-width: 460px;
   padding: 16px 18px;
   border-radius: 14px;
   background: #0f1115;
@@ -754,8 +355,6 @@ input[type="number"]:focus, select:focus{
 }
 .status-card .title{ font-weight: 700; font-size: 15px; letter-spacing: .2px; margin-top: 10px; }
 .status-card .subtitle{ opacity: .85; font-size: 13px; margin-top: 6px; }
-
-/* Minimal spinner (used inside overlay) */
 .spinner{
   width: 26px; height: 26px; border-radius: 50%;
   border: 3px solid transparent;
@@ -785,7 +384,7 @@ input[type="number"]:focus, select:focus{
 
 /* Reduced motion */
 @media (prefers-reduced-motion: reduce){
-  *{ animation-duration: .001ms !important; animation-iteration-count: 1 !important; transition-duration: .001ms !important; scroll-behavior: auto !important; }
+  *{ animation-duration: .001ms !important; animation-iteration-count: 1 !important; transition-duration: .001ms !important; }
 }
 
 /* --------------------------- Scrollbars ---------------------------------- */
@@ -793,13 +392,6 @@ input[type="number"]:focus, select:focus{
 ::-webkit-scrollbar-track { background: var(--deep-fjord); }
 ::-webkit-scrollbar-thumb { background: var(--arctic-dawn); border-radius: 6px; }
 ::-webkit-scrollbar-thumb:hover { background: var(--nordic-frost); }
-
-/* ---------------------------- Utilities ---------------------------------- */
-.hidden{ display: none !important; }
-.muted{ color: var(--text-dim); }
-
-/* --------------------------- Animations ---------------------------------- */
-@keyframes spin { to { transform: rotate(360deg); } }
 
 /* --------------------------- Responsive ---------------------------------- */
 @media (max-width: 1200px){
@@ -823,16 +415,5 @@ input[type="number"]:focus, select:focus{
   .z-btn{ height: 44px; }
 }
 
-  background: var(--deep-fjord);
-}
-
-::-webkit-scrollbar-thumb {
-  background: var(--arctic-dawn);
-  border-radius: 5px;
-}
-
-::-webkit-scrollbar-thumb:hover {
-  background: var(--nordic-frost);
-}
-
-
+/* --------------------------- Animations ---------------------------------- */
+@keyframes spin { to { transform: rotate(360deg); } }
