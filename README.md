@@ -1,249 +1,325 @@
-Perfect 👌 — here’s an upgraded **README.md (Markdown)** with **image placeholders** for diagrams/screenshots.
-I’ll add sections where you can later drop UI screenshots and workflow diagrams.
-
-```markdown
-# 3SONIC Scanner Application  
-
-🚀 **3SONIC Scanner** is a Python-based control and imaging application for an ultrasound scanning system with integrated motion control.  
-It provides a **web-based interface (Flask)** to:  
-
-- Control the scanner axes (X, Y, Z, rotation) via GUI or **keyboard shortcuts**  
-- Stream **live ultrasound video** and **external camera feed**  
-- Manage **scanning workflows** (single scan, multi-path scans)  
-- Export results as **DICOM series** and open them in **ITK-SNAP** for visualization  
-- Perform hardware tasks such as initialization, homing, jogging, and specimen placement  
+Here’s a polished, repo-ready **README.md** you can drop at the project root.
 
 ---
 
-## ✨ Features  
+# 3SONIC — Desktop UI for 3D Ultrasound Scanning
 
-- 🔧 **Motion Control**  
-  - Axis jogging (X/Y/Z) via GUI buttons or **arrow keys** (continuous jog)  
-  - Nozzle rotation control (clockwise/counterclockwise)  
-  - Safety features: homing, bounds checking, cold extrusion protection  
+A compact desktop application for controlling a benchtop ultrasound scanner. It provides:
 
-- 🎥 **Imaging**  
-  - Live ultrasound feed (via SDK/DLL integration)  
-  - External webcam integration (or placeholder if missing)  
-  - Real-time streaming in the web UI  
+* Live ultrasound + webcam streams
+* XY-Z jogging & nozzle rotation (G-code over serial)
+* One-click **Insert Bath / Position for Scan** workflow
+* **Start Scan** / **Dual Sweep** triggering (spawns recorder)
+* Automatic post-processing (PNG preview + NIfTI volume)
+* **Overview picker** to browse/open `Example_slices.png` from past scans
+* Optional **ITK-SNAP** launch on the active DICOM series
+* Graceful shutdown with hardware cleanup
 
-- 📂 **Data Management**  
-  - Automatic saving of scan data into timestamped folders  
-  - Conversion to **DICOM** format for medical imaging compatibility  
-  - Launch results directly in **ITK-SNAP**  
-
-- 🖥️ **User Interface**  
-  - Web GUI served via Flask (`http://127.0.0.1:5000`)  
-  - Responsive interface styled with modern CSS  
-  - Keyboard shortcuts:  
-    - **Arrow Keys**: Continuous jog X/Y  
-    - **W/S** (or UI buttons): Jog Z  
-    - **ESC**: Emergency Stop  
+Built with **Flask** (backend), a small **vanilla JS** frontend, and optional **pywebview** shell so it feels like a native app.
 
 ---
 
-## 🖼️ UI Preview  
+## Contents
 
-> _Screenshots from the web app interface_  
-
-![Main UI Screenshot](static/images/readme_ui_main.png)  
-*Main control panel with jog buttons and live feed.*  
-
-![Scanning Screenshot](static/images/readme_ui_scanning.png)  
-*Live scanning view with ultrasound video feed.*  
-
----
-
-## 🔄 Scanning Workflow  
-
-> _Typical sequence when performing a scan_  
-
-![Workflow Diagram](static/images/readme_workflow.png)  
-
-1. **Initialize Scanner** → Homes axes, positions probe  
-2. **Insert Specimen** → Plate lowers automatically  
-3. **Start Scan** → Probe traverses X-axis at scan speed  
-4. **Record Ultrasound Data** → Stored in timestamped data folder  
-5. **Export to DICOM** → View results in ITK-SNAP  
+* [Architecture](#architecture)
+* [Screens & Controls](#screens--controls)
+* [Installation](#installation)
+* [Configuration](#configuration)
+* [Run It](#run-it)
+* [Data & Post-Processing](#data--post-processing)
+* [Keyboard & Safety](#keyboard--safety)
+* [Troubleshooting](#troubleshooting)
+* [API Endpoints (dev)](#api-endpoints-dev)
+* [Project Layout](#project-layout)
+* [License](#license)
 
 ---
 
-## 🏗️ Project Structure  
+## Architecture
 
-```
+**Backend** (Python):
 
-3Sonic\_App/
-│
-├── app/
-│   ├── main.py                # Flask app entrypoint
-│   ├── config.py              # Centralized configuration
-│   ├── core/                  # Core logic
-│   │   ├── serial\_manager.py      # Serial connection & G-code I/O
-│   │   ├── scanner\_control.py     # High-level scanner movement API
-│   │   ├── keyboard\_control.py    # Keyboard jogging support
-│   │   └── ultrasound\_sdk.py      # Ultrasound DLL integration
-│   │
-│   ├── integrations/
-│   │   └── itk\_snap.py        # ITK-SNAP launcher
-│   │
-│   ├── scripts/
-│   │   └── record.py          # Data recording (Numpy → DICOM)
-│   │
-│   ├── utils/
-│   │   └── webcam.py          # Webcam stream generator
-│   │
-│   ├── templates/             # HTML views
-│   │   ├── main.html
-│   │   └── scanning.html
-│   │
-│   └── static/                # Frontend assets
-│       ├── css/app.css
-│       ├── js/app.js
-│       └── images/
-│           ├── 3SONICLogo.png
-│           ├── scan.png
-│           └── ...
-│
-├── requirements.txt           # Python dependencies
-└── README.md                  # Project documentation
+* `Flask` app (`app/main.py`)
+* **Serial manager** singleton (queued I/O + `send_now` fire-and-forget)
+* Scanner control (`app/core/scanner_control.py`) – homing, jogs, scan paths
+* Ultrasound SDK wrapper (`app/core/ultrasound_sdk.py`) – MJPEG generator
+* Webcam helper (`app/utils/webcam.py`) – MJPEG generator
+* ITK-SNAP integration (`app/integrations/itk_snap.py`)
+* Post-processing pipeline (`postprocessing.py`) – PNG preview + NIfTI
 
-````
+**Frontend**:
+
+* `templates/main.html`
+* `static/css/app.css` – modern, dark “Nordic” theme
+* `static/js/app.js` – controller (jogs, toggles, overlays, overview picker)
+
+**Desktop shell**:
+
+* Optional `pywebview` host window (Windows dark titlebar tweak included)
 
 ---
 
-## ⚙️ Installation  
+## Screens & Controls
 
-### 1. Clone the repository  
-```bash
-git clone https://github.com/<your-org>/3sonic-scanner.git
-cd 3sonic-scanner
-````
+### Live views
 
-### 2. Create a virtual environment
+* **Ultrasound View** (default) – auto-reloads if the stream drops; gentle overlay shows reconnection status; will auto-attempt a driver restart when needed.
+* **Camera View** – full-size webcam feed.
+
+Use the header toggle buttons to switch; the active button and title update accordingly.
+
+### Jogging & Rotation
+
+* Step size **select** (`0.1` → `10 mm`) with a safety highlight for large steps.
+* Directional buttons (X/Y/Z) and rotation CW/CCW (E axis).
+* **Keyboard shortcuts** (frontend jogs are debounced to avoid flooding):
+
+  * Arrows: `← →` (X), `↑ ↓` (Y)
+  * PageUp / PageDown: Z±
+  * `WASD`: Y−/Y+/X−/X+
+  * `R` / `F`: rotate CW / CCW
+  * `[` / `]`: cycle step size, `1`/`2`/`3` = 0.1 / 1 / 10 mm presets
+
+### Scan workflow
+
+* **Initialize** homes & moves to a known center pose, restoring the last E position.
+* **Insert Bath** (toggle):
+
+  1. Lower plate to target Z for specimen placement
+  2. Return to “position for scan”
+* **Start Scan** / **Dual Sweep** spawns the recorder and runs a scan path.
+
+### Overview picker
+
+Tap **Overview Image** to list scans that contain `Example_slices.png`.
+Open images in your OS viewer (“Open”) or new tab (“View”).
+
+---
+
+## Installation
+
+> Tested primarily on Windows; Linux/macOS work too (when your ultrasound SDK & serial driver support them).
+
+1. **Clone & venv**
 
 ```bash
+git clone <your-repo-url> 3sonic
+cd 3sonic
 python -m venv .venv
+. .venv/Scripts/activate   # Windows
+# or: source .venv/bin/activate
 ```
 
-### 3. Activate the environment
-
-* **Windows (PowerShell):**
-
-  ```bash
-  .venv\Scripts\Activate.ps1
-  ```
-* **Linux/macOS:**
-
-  ```bash
-  source .venv/bin/activate
-  ```
-
-### 4. Install dependencies
+2. **Install deps**
 
 ```bash
 pip install -r requirements.txt
 ```
 
+Typical packages used by this app:
+
+* Flask, pyserial, numpy, pandas, matplotlib, SimpleITK
+* opencv-python (webcam), pywebview (optional desktop), keyboard/pygetwindow (optional), pillow
+
+> If your ultrasound vendor ships a Python SDK or DLL, follow their install guide and ensure `app/core/ultrasound_sdk.py` can import and initialize it.
+
 ---
 
-## ▶️ Running the App
+## Configuration
 
-Start the Flask server:
+All tunables live in `app/config.py::Config`. Important ones:
+
+* **Directories**
+
+  * `BASE_DIR`, `STATIC_DIR`, `TEMPLATES_DIR`, `APP_DIR`
+  * `DATA_DIR` — where scans are recorded and post-processed
+    👉 For the Overview picker to serve PNGs, set `DATA_DIR` to live **under** `static/data`, e.g.:
+
+    ```python
+    DATA_DIR = STATIC_DIR / "data"
+    ```
+
+    so `static/data/<timestamp>/Example_slices.png` is web-reachable.
+
+* **Geometry & motion**
+
+  * `X_MAX`, `Y_MAX`, `Z_MAX`, `OFFSET_X`, `OFFSET_Y`, `OFFSET_Z`
+  * `JOG_FEED_MM_PER_MIN`, `FAST_FEED_MM_PER_MIN`, `SCAN_SPEED_MM_PER_MIN`
+  * `SCAN_POSE = {"X": 53.5, "Y": 53.5, "Z": 10.0}`
+  * `POS_TOL_MM`, `POLL_INTERVAL_S`, `POLL_TIMEOUT_S`
+
+* **Rotation (E axis)**
+
+  * `E_AXIS_DEFAULT_STEP` (default step per rotate key)
+  * `E_AXIS_ALLOW_COLD_EXTRUSION` (true: allow E moves w/o temp)
+
+* **Recorder**
+
+  * `DELAY_BEFORE_RECORD_S`
+  * Script path: `app/scripts/record.py` (spawned with args `"0"`/`"1"`)
+
+* **Flags (files used to signal scan state)**
+
+  * `SCANNING_FLAG_FILE`, `MULTISWEEP_FLAG_FILE`, `RECDIR_FILE`
+
+* **Ultrasound**
+
+  * Anything required by your SDK in `app/core/ultrasound_sdk.py`.
+
+---
+
+## Run It
+
+### Desktop mode (recommended)
 
 ```bash
-python app/main.py
+python -m app.main
 ```
 
-Open your browser at:
-👉 [http://127.0.0.1:5000](http://127.0.0.1:5000)
+This starts Flask on `http://127.0.0.1:5000` and opens a native window via **pywebview** (if installed). On Windows, a small tweak enables a dark titlebar.
+
+### Browser fallback
+
+If `pywebview` isn’t installed, your default browser will open to the local app.
 
 ---
 
-## 🎮 Controls
+## Data & Post-Processing
 
-* **Web UI**
+When a scan finishes, `postprocessing.py` will:
 
-  * Axis jog buttons with selectable step size
-  * Rotation controls
-  * Scan management (start/stop, multipath)
-  * Overview and specimen placement
+* Read the `dicom_series/` into SimpleITK
+* Save a 3×3 static preview **`Example_slices.png`**
+* Add scalebars and export **`nifti_volume.nii.gz`**
+* Append total scan time to `config.txt`
+* (Optionally) display an interactive Matplotlib viewer
 
-* **Keyboard** (when the browser window titled `3SONIC Scanner` is focused):
+**Folder layout (per scan)**:
 
-  * ⬆️ **Up Arrow** → Y- continuous jog
-  * ⬇️ **Down Arrow** → Y+ continuous jog
-  * ⬅️ **Left Arrow** → X+ continuous jog
-  * ➡️ **Right Arrow** → X- continuous jog
-  * **ESC** → Emergency stop
+```
+static/data/
+  2025-08-26_10-31-12/
+    dicom_series/ ...
+    Example_slices.png
+    nifti_volume.nii.gz
+    config.txt
+```
 
----
-
-## 🧩 Configuration
-
-All system parameters are centralized in **`app/config.py`**:
-
-* **Serial connection**
-
-  * `SERIAL_PORT` (or auto-detects CH340/USB-SERIAL)
-  * `SERIAL_BAUD` (default: 115200)
-
-* **Motion limits:**
-
-  * `X_MAX`, `Y_MAX`, `Z_MAX`
-
-* **Feedrates:**
-
-  * `JOG_FEED_MM_PER_MIN` → Manual jog speed
-  * `FAST_FEED_MM_PER_MIN` → Initialization moves
-  * `SCAN_SPEED_MM_PER_MIN` → Scan path moves
-
-* **Ultrasound settings**
-
-  * Frame size: `ULTRA_W`, `ULTRA_H`
-  * DLL: `US_DLL_NAME`
-
-* **Data directories**
-
-  * Frames, raws, dicom, logs automatically created in `static/data/`
+**Overview picker** uses those `Example_slices.png` files to build the list.
 
 ---
 
-## 🛡️ Safety
+## Keyboard & Safety
 
-* **Emergency stop** (`ESC` key or UI button) sends `M112` immediately
-* Axis moves are clamped to `[0, MAX]` bounds
-* E-axis (rotation) persists to disk to avoid drift between runs
-* Serial connection automatically reconnects if unplugged
+* Frontend jogs are **debounced** to avoid flooding the controller (`app.js`).
+* Backend moves use **relative** `G91`/`G1` jogs and immediately return (`send_now`), so rapid clicks don’t block on reads.
+* The ultrasound stream includes a **status overlay** with **auto-reload** and periodic **backend restarts** if reconnection stalls (`/api/us-restart`).
+* **Graceful exit** (`/api/exit`) stops ultrasound, releases webcam, disables keyboard hooks, closes serial, and shuts the app down.
 
----
-
-## 🧪 Development Notes
-
-* Start the app with `use_reloader=False` to avoid multiple DLL/serial initializations.
-* The **keyboard listener** requires admin privileges on Windows.
-* Placeholder images are shown if the webcam/ultrasound probe is not detected.
-* Tested with Python **3.10–3.12**.
+If you supply `app/core/keyboard_control.py` (optional), the app will best-effort enable it at startup. Remove/disable it if you don’t want global keyboard hooks.
 
 ---
 
-## 📸 Screenshots / Demo Video
+## Troubleshooting
 
-You can add more media here:
+**No serial / timeouts**
 
-* [ ] GIF of live scanning
-* [ ] Screenshot of ITK-SNAP with exported DICOM
-* [ ] Short demo video
+* Check Device Manager (Windows) for **CH340** / **USB-SERIAL** devices.
+* Verify baudrate matches firmware (default 115200).
+* If you see repeated `Timeout waiting for 'G0 F...'`, lower `JOG_FEED_MM_PER_MIN` or ensure firmware returns `ok` promptly. The app already minimizes repeated `F` changes and uses queued reads.
+
+**Ultrasound stream is black/cropped**
+
+* The `<img>` uses `object-fit: contain;` in CSS and a larger container; sizing issues are typically fixed by the shipped `app.css`.
+* Cable reseats are detected; the overlay will try reconnection and occasionally restart the driver (`/api/us-restart`).
+
+**Overview images don’t show**
+
+* Ensure `DATA_DIR = STATIC_DIR / "data"` (or expose `DATA_DIR` via a Flask static route).
+* Confirm each scan folder contains `Example_slices.png`.
+
+**ITK-SNAP button does nothing**
+
+* Install ITK-SNAP and verify the path/command used in `app/integrations/itk_snap.py`.
 
 ---
 
-## 📜 License
+## API Endpoints (dev)
 
-This project is proprietary to **3SONIC**.
-For licensing inquiries, please contact the maintainers.
+* **Streams**
 
+  * `GET /ultrasound_video_feed` — MJPEG ultrasound
+  * `GET /video_feed` — MJPEG webcam
+  * `POST /api/us-restart` — restart ultrasound stack
+
+* **Motion**
+
+  * `POST /move_probe` — `{direction, step}` where direction ∈
+    `Xplus|Xminus|Yplus|Yminus|Zplus|Zminus|rotateClockwise|rotateCounterclockwise`
+
+* **Workflow**
+
+  * `GET /initscanner`
+  * `GET /scanpath`, `GET /multipath`
+  * `POST /api/lower-plate`
+  * `POST /api/position-for-scan`
+
+* **Overview**
+
+  * `GET /api/overview/list?limit=50` → `{items:[{folder, png_url, created}]}`
+  * `POST /api/overview/open` → `{folder}`
+
+* **Utilities**
+
+  * `POST /open-itksnap`
+  * `POST /api/exit`
+  * `GET /shutdown` (alias)
+
+All routes bind to `127.0.0.1:5000` by default (not exposed to the network).
+
+---
+
+## Project Layout
+
+```
+app/
+  main.py                        # Flask app + desktop launcher
+  config.py                      # Config class (paths, motion, speeds, etc.)
+  core/
+    scanner_control.py           # Jogging, homing, scan path, E-axis persistence
+    serial_manager.py            # Serial singleton (queue + send_now + wait)
+    ultrasound_sdk.py            # Ultrasound initialize/generate/reset
+    keyboard_control.py          # (optional) global keyboard hooks
+  integrations/
+    itk_snap.py                  # Open ITK-SNAP against latest DICOM
+  utils/
+    webcam.py                    # Webcam MJPEG generator
+static/
+  css/app.css
+  js/app.js
+  data/                          # (recommended) scan output root for PNG picker
+templates/
+  main.html
+scripts/
+  record.py                      # Recorder invoked by scans (multi arg 0/1)
+postprocessing.py                # Example_slices.png + NIfTI + times + viewer
 ```
 
 ---
 
-Would you like me to also **make a simple `workflow.png` diagram** (axes → ultrasound → DICOM → ITK-SNAP) in Mermaid/Graphviz so you don’t need to design it manually?
-```
+## License
+
+If this project is **proprietary**, keep this section as-is and restrict distribution.
+If you intend to open-source it, add an OSI license (e.g. MIT/Apache-2.0) and include the matching `LICENSE` file.
+
+---
+
+### Acknowledgements
+
+* ITK-SNAP (image segmentation/visualization)
+* SimpleITK (medical image IO)
+* Marlin/RepRap G-code conventions (motion control)
+
+---
+
+**Happy scanning!**
