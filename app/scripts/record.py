@@ -84,10 +84,31 @@ def main(argv: list[str]) -> int:
     host_name = platform.node()
 
     # ── capture current position string (first line like original) ────────────
-    try:
-        position_line = pssc.get_position()[0]
-    except Exception:
-        position_line = ""
+        # ── capture current position string (prefer env from main.py) ─────────────
+    position_line = os.environ.get("REC_POSITION_STR", "").strip()
+
+    if not position_line:
+        # fallback: try asking the controller here (may be unavailable)
+        try:
+            raw = pssc.get_position()
+            if isinstance(raw, (list, tuple)) and raw:
+                position_line = str(raw[0]).split("\n")[0]
+            elif isinstance(raw, str):
+                position_line = raw.split("\n")[0]
+        except Exception:
+            position_line = ""
+
+    if not position_line:
+        # last-resort per-axis read to avoid blank field
+        try:
+            x = pssc.get_position_axis("X")
+            y = pssc.get_position_axis("Y")
+            z = pssc.get_position_axis("Z")
+            if None not in (x, y, z):
+                position_line = f"X{float(x):.3f} Y{float(y):.3f} Z{float(z):.3f}"
+        except Exception:
+            position_line = ""
+
 
     # ── write config.txt (same keys/format/order as original) ─────────────────
     cfg_path = measurement_dir / "config.txt"

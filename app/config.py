@@ -104,6 +104,10 @@ class Config:
         fallback=BASE_DIR / "templates",
     )
 
+    # Orientation for LIVE ultrasound stream (does not affect saved data)
+    ULTRA_VFLIP = True  # flip vertically (Y)
+    ULTRA_HFLIP = False   # flip horizontally (X)
+
     # Writable output (kept under STATIC/data). We create these (not STATIC_DIR itself).
     DATA_DIR: Path = (STATIC_DIR / "data").resolve()
     LOGS_DIR: Path = (DATA_DIR / "logs").resolve()

@@ -456,25 +456,4 @@ def returnresponses(_serialconn=None, _mytext: str = "") -> List[str]:
     return get_position()
 
 
-# =============================================================================
-# Simple demo util
-# =============================================================================
-def unknowns() -> None:
-    try:
-        if not _ensure_connected():
-            print("[unknowns] Not connected")
-            return
-        _ensure_units_and_absolute()
-        home("X")
-        home("Y")
-        feedrate(100.0)
-        time.sleep(0.5)
 
-        D = 0.0
-        for _ in range(15):
-            D += 1.0
-            move_absolute("X", D)
-            _ = get_position()
-            time.sleep(0.2)
-    except Exception as exc:
-        print(f"[unknowns] {exc}")

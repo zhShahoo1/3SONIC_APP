@@ -6,6 +6,9 @@ Ultrasound SDK wrapper (resilient singleton with auto-reconnect).
   disconnects/reconnects.
 - `generate_image()` never dies: it yields JPEG frames continuously. When the
   probe is missing, it yields a placeholder with "No probe / reconnecting…".
+- Orientation for the LIVE stream is configurable via app.config.Config:
+    ULTRA_VFLIP_LIVE: bool = False   # flip vertically for live MJPEG
+    ULTRA_HFLIP_LIVE: bool = False   # flip horizontally for live MJPEG
 - Public helpers:
     initialize_ultrasound() -> (w, h, (resX, resY))
     generate_image() -> yields JPEG bytes (RGB, MJPEG stream-friendly)
@@ -26,7 +29,7 @@ from ctypes import cdll, c_uint32, c_float, pointer
 from app.config import Config
 
 # -------------------------------------------------------------------
-# Digit + scalebar drawing (unchanged from your version)
+# Digit + scalebar drawing (kept as in your version)
 # -------------------------------------------------------------------
 
 def draw_scale_bar(image: np.ndarray, mask: np.ndarray, value: int) -> np.ndarray:
@@ -118,7 +121,8 @@ def draw_six(mask, location):
     return mask
 
 def get_mask(image: np.ndarray, resolution: Tuple[float, float]) -> np.ndarray:
-    img = np.flip(image, axis=0)  # original layout (w,h,4)
+    # Build tick/number mask on a vertically flipped copy, then unflip back.
+    img = np.flip(image, axis=0)
     twohalf_mm = max(1, int(2.5 / max(resolution[0], 1e-6)))
     col_idx = int(0.95 * img.shape[1])
 
@@ -133,8 +137,8 @@ def get_mask(image: np.ndarray, resolution: Tuple[float, float]) -> np.ndarray:
 
     col_numbers = int(0.98 * img.shape[1])
     zero_location = (25, col_numbers)
-    one_location = (twohalf_mm * 4, col_numbers)
-    two_location = (twohalf_mm * 8, col_numbers)
+    one_location  = (twohalf_mm * 4, col_numbers)
+    two_location  = (twohalf_mm * 8, col_numbers)
 
     mask = draw_zero(mask, zero_location)
     mask = draw_one(mask, one_location)
@@ -152,7 +156,7 @@ def get_mask(image: np.ndarray, resolution: Tuple[float, float]) -> np.ndarray:
     return np.flip(mask, axis=0)
 
 # -------------------------------------------------------------------
-# Resilient singleton
+# Resilient singleton for the DLL
 # -------------------------------------------------------------------
 
 class _UltrasoundDLL:
@@ -328,9 +332,13 @@ def initialize_ultrasound() -> Tuple[int, int, Tuple[float, float]]:
     return w, h, inst.resolution
 
 def grab_rgba_frame() -> np.ndarray:
+    """
+    Return a single RGBA frame as (H, W, 4) uint8 WITHOUT applying live-view flips.
+    Use generate_image() for the MJPEG stream with optional flipping.
+    """
     inst = _UltrasoundDLL()
     if not inst.ensure_ready():
-        # Return a 1x1 blank to avoid exceptions if someone calls this directly
+        # Return a tiny blank to avoid exceptions if called before init
         return np.zeros((1, 1, 4), dtype=np.uint8)
 
     w, h = inst.size
@@ -356,20 +364,28 @@ def close() -> None:
 def reset() -> None:
     _UltrasoundDLL().reset()
 
+def _apply_live_orientation(rgb: np.ndarray) -> np.ndarray:
+    """
+    Apply optional flips for the LIVE MJPEG stream only.
+    Controlled by Config.ULTRA_VFLIP_LIVE and ULTRA_HFLIP_LIVE (default False).
+    """
+    if getattr(Config, "ULTRA_VFLIP_LIVE", False):
+        rgb = cv2.flip(rgb, 0)  # vertical
+    if getattr(Config, "ULTRA_HFLIP_LIVE", False):
+        rgb = cv2.flip(rgb, 1)  # horizontal
+    return rgb
+
 def generate_image(*_unused, **_unused_kw) -> Generator[bytes, None, None]:
     """
     Yield JPEG frames forever.
-    - When connected: live frames with scalebar (RGB).
-    - When disconnected: periodic reconnect attempts + placeholder frames.
+    - Connected: live frames (RGB) with scalebar, forced vertical flip applied.
+    - Disconnected: placeholder frames with periodic reconnect attempts.
     """
     inst = _UltrasoundDLL()
-
-    # Prime mask once we have a frame; until then, use a placeholder
     mask = None
 
     while True:
         if not inst.ensure_ready():
-            # Yield a low-FPS placeholder while we attempt reconnect
             img = inst._placeholder_rgb("No probe / reconnecting…")
             ok, jpeg = cv2.imencode(".jpg", img)
             if ok:
@@ -384,37 +400,40 @@ def generate_image(*_unused, **_unused_kw) -> Generator[bytes, None, None]:
             dll.return_pixel_values(pointer(p_array))
 
             buffer = np.frombuffer(p_array, np.uint32)
-            reshaped = np.reshape(buffer, (w, h, 4))
+            reshaped = np.reshape(buffer, (w, h, 4))  # keep native orientation
 
-            # build scalebar mask once (cheap to reuse)
+            # Build scalebar mask once (for native orientation)
             if mask is None:
                 mask = get_mask(reshaped, inst.resolution)
 
             reshaped = draw_scale_bar(reshaped, mask, 255)
             reshaped = np.clip(reshaped, 0, 255).astype(np.uint8)
-            reshaped = cv2.flip(reshaped, 0)        # match original orientation
-            rgb = reshaped[:, :, :3]                # RGB
+
+            # RGB (drop alpha)
+            rgb = reshaped[:, :, :3]
+
+            # Force the correct view: vertical flip (top↔bottom)
+            rgb = cv2.flip(rgb, 0)
 
             ok, jpeg = cv2.imencode(".jpg", rgb)
             if ok:
                 yield jpeg.tobytes()
             else:
-                # Rare encoder hiccup: yield placeholder once
-                img = inst._placeholder_rgb("Encoder error")
-                ok2, jpeg2 = cv2.imencode(".jpg", img)
+                ph = inst._placeholder_rgb("Encoder error")
+                ok2, jpeg2 = cv2.imencode(".jpg", ph)
                 if ok2:
                     yield jpeg2.tobytes()
 
         except Exception as e:
-            # Any DLL/USB error -> reset and try to reconnect while streaming placeholders
             print(f"[Ultrasound] stream error: {e}")
             inst.reset()
-            # short backoff loop with placeholders
             t0 = time.time()
             while time.time() - t0 < 3.0 and not inst.ensure_ready():
-                img = inst._placeholder_rgb("No probe / reconnecting…")
-                ok, jpeg = cv2.imencode(".jpg", img)
+                ph = inst._placeholder_rgb("No probe / reconnecting…")
+                ok, jpeg = cv2.imencode(".jpg", ph)
                 if ok:
                     yield jpeg.tobytes()
                 time.sleep(0.5)
-            # then loop back and try live again
+
+
+

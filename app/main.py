@@ -327,6 +327,38 @@ def initscanner():
         print("[/initscanner] Exception:\n", tb)
         return jsonify(success=False, message=f"INIT crashed: {e}"), 500
 
+# ------------------------------------------------------------------------------
+# Single-scan orchestration (unchanged)
+# ------------------------------------------------------------------------------
+# def _start_scan(multi: bool):
+#     scanning_f, multisweep_f, _ = _flag_paths()
+#     _set_flag(scanning_f, "1")
+#     _set_flag(multisweep_f, "1" if multi else "0")
+
+#     pssc.go2StartScan()
+#     time.sleep(4)
+
+#     rec_path = (Config.APP_DIR / "scripts" / "record.py").resolve()
+#     python_exe = getattr(Config, "PYTHON_EXE", sys.executable)
+#     try:
+#         sp.Popen([python_exe, str(rec_path), "1" if multi else "0"], cwd=str(PROJECT_ROOT))
+#     except Exception as e:
+#         print(f"[scan] failed to spawn recorder: {e}")
+
+#     delay_s = int(getattr(Config, "DELAY_BEFORE_RECORD_S", 9))
+#     time.sleep(delay_s)
+#     pssc.ScanPath()
+
+#     newest = _newest_data_folder_name()
+#     return render_template(
+#         "scanning.html",
+#         link2files=str(Config.DATA_DIR / newest),
+#         linkshort=newest,
+#     )
+
+# @app.route("/scanpath")
+# def scanpath():
+#     return _start_scan(multi=False)
 def _start_scan(multi: bool):
     scanning_f, multisweep_f, _ = _flag_paths()
     _set_flag(scanning_f, "1")
@@ -335,10 +367,35 @@ def _start_scan(multi: bool):
     pssc.go2StartScan()
     time.sleep(4)
 
-    rec_path = (Config.APP_DIR / "scripts" / "record.py").resolve()
-    python_exe = getattr(Config, "PYTHON_EXE", sys.executable)
+    # --- NEW: capture current position string in THIS process (serial is live here)
+    pos_str = ""
     try:
-        sp.Popen([python_exe, str(rec_path), "1" if multi else "0"], cwd=str(PROJECT_ROOT))
+        pos_val = pssc.get_position()  # many firmwares return list[str]
+        if isinstance(pos_val, (list, tuple)):
+            pos_str = str(pos_val[0]).split("\n")[0]
+        elif isinstance(pos_val, str):
+            pos_str = pos_val.split("\n")[0]
+        # per-axis fallback if the above came back empty
+        if not pos_str:
+            x = pssc.get_position_axis("X")
+            y = pssc.get_position_axis("Y")
+            z = pssc.get_position_axis("Z")
+            if None not in (x, y, z):
+                pos_str = f"X{float(x):.3f} Y{float(y):.3f} Z{float(z):.3f}"
+    except Exception:
+        pass
+
+    rec_path   = (Config.APP_DIR / "scripts" / "record.py").resolve()
+    python_exe = getattr(Config, "PYTHON_EXE", sys.executable)
+
+    # --- NEW: pass position to record.py via environment
+    env = os.environ.copy()
+    env["REC_POSITION_STR"] = pos_str
+
+    try:
+        sp.Popen([python_exe, str(rec_path), "1" if multi else "0"],
+                 cwd=str(PROJECT_ROOT),
+                 env=env)  # ← pass env!
     except Exception as e:
         print(f"[scan] failed to spawn recorder: {e}")
 
@@ -353,13 +410,89 @@ def _start_scan(multi: bool):
         linkshort=newest,
     )
 
-@app.route("/scanpath")
-def scanpath():
-    return _start_scan(multi=False)
+
+# ------------------------------------------------------------------------------
+# MultiSweep orchestration (two scans + merge) — legacy behavior replicated
+# ------------------------------------------------------------------------------
+def _is_scanning() -> bool:
+    try:
+        return (Config.SCANNING_FLAG_FILE.read_text().strip() == "1")
+    except Exception:
+        return False
+
+def _wait_until_not_scanning(timeout_s: float = 600.0) -> bool:
+    t0 = time.time()
+    while time.time() - t0 <= timeout_s:
+        if not _is_scanning():
+            return True
+        time.sleep(0.5)
+    return False
+
+def _latest_two_scan_dirs():
+    """Return the two newest scan folders (older_first, newer_second)."""
+    try:
+        subdirs = [p for p in Config.DATA_DIR.iterdir() if p.is_dir()]
+        if len(subdirs) < 2:
+            return (None, None)
+        two = sorted(subdirs, key=lambda p: p.name)[-2:]
+        return (two[0], two[1])  # (older, newer)
+    except Exception:
+        return (None, None)
+
+def _run_multisweep_sequence() -> tuple[bool, str]:
+    """
+    1) Y -= 10, scan (multi=True) → wait
+    2) Y += 20, scan (multi=True) → wait
+    3) spawn scripts/multisweep.py (merges into older dir)
+    Returns (ok, folder_name_to_show or error_message).
+    """
+    try:
+        # Sweep 1: small negative Y offset
+        pssc.deltaMove(-10.0, "Y")
+        time.sleep(4.0)
+        _start_scan(multi=True)  # kicks off record.py with multisweep flag set
+        if not _wait_until_not_scanning():
+            return False, "Timeout waiting for sweep #1 to finish"
+
+        # Sweep 2: opposite side
+        pssc.deltaMove(+20.0, "Y")
+        time.sleep(2.0)
+        _start_scan(multi=True)
+        if not _wait_until_not_scanning():
+            return False, "Timeout waiting for sweep #2 to finish"
+
+        # Identify the two latest scan dirs before merge output reshuffles things
+        older, newer = _latest_two_scan_dirs()
+        if older is None or newer is None:
+            return False, "Not enough scan folders for MultiSweep merge"
+
+        # Merge (writes into 'older' dir, then cleans up 'newer')
+        multi_path = (Config.APP_DIR / "scripts" / "multisweep.py").resolve()
+        python_exe = getattr(Config, "PYTHON_EXE", sys.executable)
+        try:
+            sp.Popen([python_exe, str(multi_path)], cwd=str(PROJECT_ROOT))
+        except Exception as e:
+            return False, f"Failed to spawn multisweep: {e}"
+
+        # Give the merger a moment to produce Example_slices.png (non-blocking)
+        time.sleep(2.0)
+        return True, older.name
+
+    except Exception as e:
+        return False, f"MultiSweep error: {e}"
 
 @app.route("/multipath")
 def multipath():
-    return _start_scan(multi=True)
+    ok, payload = _run_multisweep_sequence()
+    if not ok:
+        return jsonify(success=False, message=str(payload)), 500
+
+    folder = payload  # the older dir where merged output lives
+    return render_template(
+        "scanning.html",
+        link2files=str(Config.DATA_DIR / folder),
+        linkshort=folder,
+    )
 
 # Legacy hook (button now opens a picker, but keep this endpoint harmless)
 @app.route("/overViewImage", methods=["POST"])
@@ -390,20 +523,22 @@ def api_overview_list():
         n = 50
 
     data_dir = Config.DATA_DIR
-    items = []
+    items = {}
     try:
         # newest first (folder names are timestamps)
+        out = []
         for p in sorted([d for d in data_dir.iterdir() if d.is_dir()],
                         key=lambda x: x.name, reverse=True):
             png = p / "Example_slices.png"
             if png.exists():
-                items.append({
+                out.append({
                     "folder": p.name,
                     "png_url": f"/static/data/{p.name}/Example_slices.png",
                     "created": png.stat().st_mtime
                 })
-            if len(items) >= n:
+            if len(out) >= n:
                 break
+        items = out
     except Exception as e:
         return jsonify(success=False, message=str(e), items=[]), 500
 
@@ -568,6 +703,7 @@ def _launch_desktop():
     else:
         print("[Desktop] pywebview not installed. Opening browser instead.")
         webbrowser.open(url)
+
 
 # ------------------------------------------------------------------------------
 # Entrypoint

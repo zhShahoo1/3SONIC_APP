@@ -309,7 +309,7 @@ input[type="number"]:focus, select:focus{
 }
 
 /* Safety cue for big step sizes (toggled via JS) */
-.danger-step{ border: 2px solid #fa5252; background: #fff5f5; }
+.danger-step{ border: 2px solid #fa5252; background:rgba(46,52,64,.9); }
 
 /* ----------------------------- Modal ------------------------------------- */
 .modal{

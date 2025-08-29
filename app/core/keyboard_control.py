@@ -10,6 +10,7 @@ import pygetwindow as gw
 
 from app.config import Config
 from app.core.serial_manager import send_gcode, send_now, connected_event
+from app.core.scanner_control import go2INIT
 
 # ===== Public toggle used by main.py =====
 _keyboard_enabled = True
@@ -67,13 +68,11 @@ def _begin_continuous_jog(axis: str, sign: int) -> None:
         stop_flag = threading.Event()
 
         def _worker():
-            try:
-                send_now("G91")  # relative
-                while not stop_flag.is_set():
-                    send_now(f"G1 {axis}{sign * STEP_CONTINUOUS_MM:.3f} F{FEEDRATE}")
-                    time.sleep(STEP_INTERVAL_S)
-            finally:
-                send_now("G90")  # absolute
+            send_now("G91")
+            while not stop_flag.is_set():
+                send_now(f"G1 {axis}{sign * 0.1} F{FEEDRATE}")
+                time.sleep(0.015)
+            send_now("G90")
 
         t = threading.Thread(target=_worker, daemon=True)
         _move_threads[key_id] = (t, stop_flag)
@@ -105,8 +104,18 @@ def _on_press(key: str) -> None:
         _begin_continuous_jog("X", +1)
     elif key == "right":
         _begin_continuous_jog("X", -1)
+    elif key == "page up":
+        _begin_continuous_jog("Z", -1)   # Z-
+    elif key == "page down":
+        _begin_continuous_jog("Z", +1)   # Z+
     elif key == "esc":
         emergency_stop()
+    elif key == "home":
+        try:
+            # local import to avoid circular imports at module import time
+            go2INIT()
+        except Exception as e:
+            print(f"[Keyboard] Failed to run go2INIT: {e}")
 
 
 def _on_release(key: str) -> None:
@@ -118,6 +127,11 @@ def _on_release(key: str) -> None:
         _end_continuous_jog("X", +1)
     elif key == "right":
         _end_continuous_jog("X", -1)
+    elif key == "page up":
+        _end_continuous_jog("Z", -1)
+    elif key == "page down":
+        _end_continuous_jog("Z", +1)
+
 
 
 def start_keyboard_listener():
@@ -125,21 +139,27 @@ def start_keyboard_listener():
     Start global keyboard hooks. Non-blocking; returns the backing thread.
     Requires admin privileges on Windows for `keyboard`.
     """
-    print("[Keyboard] Control active. Hold arrow keys for continuous XY jog. ESC = E-stop.")
+    print("[Keyboard] Control active. Hold arrow keys for XY, PgUp/PgDn for Z, ESC = E-stop. Home = initialize scanner.")
 
     # Press hooks
-    keyboard.on_press_key("up",    lambda _: _on_press("up"))
-    keyboard.on_press_key("down",  lambda _: _on_press("down"))
-    keyboard.on_press_key("left",  lambda _: _on_press("left"))
-    keyboard.on_press_key("right", lambda _: _on_press("right"))
-    keyboard.on_press_key("esc",   lambda _: _on_press("esc"))
+    keyboard.on_press_key("up",        lambda _: _on_press("up"))
+    keyboard.on_press_key("down",      lambda _: _on_press("down"))
+    keyboard.on_press_key("left",      lambda _: _on_press("left"))
+    keyboard.on_press_key("right",     lambda _: _on_press("right"))
+    keyboard.on_press_key("page up",   lambda _: _on_press("page up"))
+    keyboard.on_press_key("page down", lambda _: _on_press("page down"))
+    keyboard.on_press_key("esc",       lambda _: _on_press("esc"))
+    keyboard.on_press_key("home",      lambda _: _on_press("home"))
 
     # Release hooks
-    keyboard.on_release_key("up",    lambda _: _on_release("up"))
-    keyboard.on_release_key("down",  lambda _: _on_release("down"))
-    keyboard.on_release_key("left",  lambda _: _on_release("left"))
-    keyboard.on_release_key("right", lambda _: _on_release("right"))
+    keyboard.on_release_key("up",        lambda _: _on_release("up"))
+    keyboard.on_release_key("down",      lambda _: _on_release("down"))
+    keyboard.on_release_key("left",      lambda _: _on_release("left"))
+    keyboard.on_release_key("right",     lambda _: _on_release("right"))
+    keyboard.on_release_key("page up",   lambda _: _on_release("page up"))
+    keyboard.on_release_key("page down", lambda _: _on_release("page down"))
 
     t = threading.Thread(target=keyboard.wait, args=("esc",), daemon=True)
     t.start()
     return t
+

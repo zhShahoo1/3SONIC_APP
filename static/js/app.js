@@ -250,28 +250,28 @@
 
   // Keyboard shortcuts
   function bindKeyboard() {
-    const map = new Map([
-      ["ArrowLeft", () => sendMove("Xminus", state.step)],
-      ["ArrowRight", () => sendMove("Xplus", state.step)],
-      ["ArrowUp", () => sendMove("Yminus", state.step)],
-      ["ArrowDown", () => sendMove("Yplus", state.step)],
-      ["PageUp", () => sendMove("Zplus", state.step)],
-      ["PageDown", () => sendMove("Zminus", state.step)],
+    // const map = new Map([
+    //   ["ArrowLeft", () => sendMove("Xminus", state.step)],
+    //   ["ArrowRight", () => sendMove("Xplus", state.step)],
+    //   ["ArrowUp", () => sendMove("Yminus", state.step)],
+    //   ["ArrowDown", () => sendMove("Yplus", state.step)],
+    //   ["PageUp", () => sendMove("Zplus", state.step)],
+    //   ["PageDown", () => sendMove("Zminus", state.step)],
 
-      ["a", () => sendMove("Xminus", state.step)],
-      ["d", () => sendMove("Xplus", state.step)],
-      ["w", () => sendMove("Yminus", state.step)],
-      ["s", () => sendMove("Yplus", state.step)],
+    //   ["a", () => sendMove("Xminus", state.step)],
+    //   ["d", () => sendMove("Xplus", state.step)],
+    //   ["w", () => sendMove("Yminus", state.step)],
+    //   ["s", () => sendMove("Yplus", state.step)],
 
-      ["r", () => rotateCW(state.step)],
-      ["f", () => rotateCCW(state.step)],
+    //   ["r", () => rotateCW(state.step)],
+    //   ["f", () => rotateCCW(state.step)],
 
-      ["1", () => setStep(0.1)],
-      ["2", () => setStep(1)],
-      ["3", () => setStep(10)],
-      ["[", () => cycleStep(-1)],
-      ["]", () => cycleStep(+1)],
-    ]);
+    //   ["1", () => setStep(0.1)],
+    //   ["2", () => setStep(1)],
+    //   ["3", () => setStep(10)],
+    //   ["[", () => cycleStep(-1)],
+    //   ["]", () => cycleStep(+1)],
+    // ]);
 
     window.addEventListener("keydown", (ev) => {
       const tag = (ev.target?.tagName || "").toLowerCase();
