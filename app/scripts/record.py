@@ -2,13 +2,12 @@
 from __future__ import annotations
 
 """
-3SONIC — Recording script
--------------------------
-- Behavior identical to the original: same file layout, loop logic, and DLL calls.
-- All tunables (sizes, speeds, sampling, paths) come from app.config.Config.
-- Safe to run as:
-    python -m app.scripts.record
-    python app/scripts/record.py
+3SONIC — Recording script (scan-path aware & dynamic frames)
+- Uses operator-selected X range (scanplan.json or env: SCAN_X0/SCAN_X1 or SCAN_START_X/SCAN_END_X).
+- Frames = ceil(dx / e_r_effective). e_r_effective = ELEV_RESOLUTION_MM,
+  or (TRAVEL_SPEED_X_MM_PER_S / TARGET_FPS) if ELEV_RESOLUTION_MM <= 0.
+- Keeps original DLL calls, file layout, and config.txt order.
+- Stops cleanly if app exits (checks SCANNING flag / signals).
 """
 
 # ── allow running as a module or a script ─────────────────────────────────────
@@ -17,7 +16,7 @@ from pathlib import Path
 
 if __package__ in (None, ""):
     THIS_FILE = Path(__file__).resolve()
-    PROJECT_ROOT = THIS_FILE.parents[2]  # .../<project-root>
+    PROJECT_ROOT = THIS_FILE.parents[2]
     if str(PROJECT_ROOT) not in sys.path:
         sys.path.insert(0, str(PROJECT_ROOT))
 # ─────────────────────────────────────────────────────────────────────────────
@@ -26,6 +25,9 @@ import ctypes
 from ctypes import cdll, c_float, c_uint32, pointer
 import os
 import time
+import json
+import math
+import signal
 from datetime import datetime
 import numpy as np
 import subprocess as sp
@@ -35,60 +37,93 @@ from app.config import Config
 from app.core import scanner_control as pssc
 
 
-def main(argv: list[str]) -> int:
-    # ── session timing/flags (same semantics as before) ───────────────────────
-    start_time = time.time()
+# ------------------------- scan-range helpers -------------------------
+def _read_scan_plan() -> tuple[float, float, str]:
+    """
+    Priority:
+      1) Config.SCANPLAN_FILE JSON: {"x0": .., "x1": .., "mode": ...}
+      2) Env pairs: (SCAN_X0, SCAN_X1) then (SCAN_START_X, SCAN_END_X)
+      3) Default: 0 → X_MAX
+    Returns: (x0, x1, mode_str)
+    """
+    x_max = float(getattr(Config, "X_MAX", 118.0))
+    x0, x1, mode = 0.0, x_max, "default"
 
+    # 1) shared file
+    try:
+        plan = json.loads(Config.SCANPLAN_FILE.read_text(encoding="utf-8"))
+        if "x0" in plan and "x1" in plan:
+            x0 = float(plan["x0"])
+            x1 = float(plan["x1"])
+        mode = str(plan.get("mode", mode))
+    except Exception:
+        pass
+
+    # 2) env fallbacks (try both pairs)
+    for A, B in (("SCAN_X0", "SCAN_X1"), ("SCAN_START_X", "SCAN_END_X")):
+        sx, ex = os.environ.get(A), os.environ.get(B)
+        if sx is not None and ex is not None:
+            try:
+                x0 = float(sx); x1 = float(ex); mode = "env"
+                break
+            except Exception:
+                pass
+
+    # clamp & ensure forward span
+    x0 = max(0.0, min(x0, x_max))
+    x1 = max(0.0, min(x1, x_max))
+    if x1 <= x0:
+        # minimal span to avoid zero frames
+        x1 = min(x_max, x0 + 1.0)
+
+    return x0, x1, mode
+
+
+# ------------------------- stop/abort handling -------------------------
+_STOP = False
+def _sig_stop(_sig, _frm):
+    global _STOP; _STOP = True
+for s in ("SIGTERM", "SIGINT"):
+    try:
+        signal.signal(getattr(signal, s), _sig_stop)
+    except Exception:
+        pass
+
+def _should_stop() -> bool:
+    if _STOP:
+        return True
+    try:
+        return Config.SCANNING_FLAG_FILE.read_text().strip() != "1"
+    except Exception:
+        return True
+
+
+def main(argv: list[str]) -> int:
+    # ── session timing/flags ──────────────────────────────────────────────────
+    start_time = time.time()
     try:
         Config.SCANNING_FLAG_FILE.write_text("1")
     except Exception:
         pass
 
     # ── paths ─────────────────────────────────────────────────────────────────
-    scripts_dir = Path(__file__).resolve().parent    # .../app/scripts
-    data_root = Config.DATA_DIR                      # .../<project-root>/static/data
-    print("My path: ", str(scripts_dir) + os.sep)
-
-    ts_epoch = int(time.time())
-    ts_str = datetime.fromtimestamp(ts_epoch).strftime("%Y%m%d_%H%M%S")
-    print(ts_str, ts_epoch)
-
-    measurement_dir = data_root / ts_str
+    data_root = Config.DATA_DIR
+    ts_str = datetime.now().strftime("%Y%m%d_%H%M%S")
+    measurement_dir = (data_root / ts_str).resolve()
     os.makedirs(measurement_dir, exist_ok=True)
 
-    # Also write the most-recent directory path like the original flow
     try:
         Config.RECDIR_FILE.write_text(str(measurement_dir))
     except Exception:
         pass
 
-    # ── recording parameters (read from Config; unchanged logic) ──────────────
-    # If you added Config.RECORD_W/RECORD_H they will be used; otherwise ULTRA_*.
-    w: int = int(getattr(Config, "RECORD_W", Config.ULTRA_W))
-    h: int = int(getattr(Config, "RECORD_H", Config.ULTRA_H))
+    # ── resolve scan path ─────────────────────────────────────────────────────
+    scan_x0, scan_x1, scan_mode = _read_scan_plan()
+    dx_mm = abs(scan_x1 - scan_x0)
 
-    travel_speed_x: float = Config.TRAVEL_SPEED_X_MM_PER_S      # mm/s
-    elev_resolution_mm: float = Config.ELEV_RESOLUTION_MM       # mm (e_r)
-    dx_mm: float = Config.DX_MM                                 # mm span on X
-    frame_rate_aim: float = Config.TARGET_FPS                   # Hz
-
-    # Derived sampling values (identical math)
-    sample_time_ms = 1000.0 / frame_rate_aim
-    time_interval_sampling_actual = sample_time_ms
-    time_interval_sampling = elev_resolution_mm / travel_speed_x
-    min_required_frames = int(round(dx_mm / elev_resolution_mm))
-    correction_factor_sampling = time_interval_sampling / time_interval_sampling_actual
-    total_samples = min_required_frames
-    n_samples = int(round(total_samples))
-
-    host_name = platform.node()
-
-    # ── capture current position string (first line like original) ────────────
-        # ── capture current position string (prefer env from main.py) ─────────────
+    # ── capture current position (best effort; used in config.txt) ────────────
     position_line = os.environ.get("REC_POSITION_STR", "").strip()
-
     if not position_line:
-        # fallback: try asking the controller here (may be unavailable)
         try:
             raw = pssc.get_position()
             if isinstance(raw, (list, tuple)) and raw:
@@ -96,10 +131,8 @@ def main(argv: list[str]) -> int:
             elif isinstance(raw, str):
                 position_line = raw.split("\n")[0]
         except Exception:
-            position_line = ""
-
+            pass
     if not position_line:
-        # last-resort per-axis read to avoid blank field
         try:
             x = pssc.get_position_axis("X")
             y = pssc.get_position_axis("Y")
@@ -109,123 +142,143 @@ def main(argv: list[str]) -> int:
         except Exception:
             position_line = ""
 
+    # ── recording parameters ──────────────────────────────────────────────────
+    w = int(getattr(Config, "RECORD_W", Config.ULTRA_W))
+    h = int(getattr(Config, "RECORD_H", Config.ULTRA_H))
 
-    # ── write config.txt (same keys/format/order as original) ─────────────────
-    cfg_path = measurement_dir / "config.txt"
-    with cfg_path.open("a", encoding="utf-8") as f:
-        f.write("%s:%s;\n" % ("W", w))
-        f.write("%s:%s;\n" % ("H", h))
-        f.write("%s:%s;\n" % ("e_r setpoint", elev_resolution_mm))
-        f.write("%s:%s;\n" % ("dx", dx_mm))
-        f.write("%s:%s;\n" % ("total_samples", total_samples))
-        f.write("%s:%s;\n" % ("frame_rate_aim", frame_rate_aim))
-        f.write("%s:%s;\n" % ("delay at SS", int(Config.DELAY_BEFORE_RECORD_S)))   # unchanged label
-        f.write("%s:%s;\n" % ("scan speed ", int(Config.SCAN_SPEED_MM_PER_MIN)))   # unchanged label (trailing space)
-        f.write("%s:%s;\n" % ("ID ", measurement_dir.name))
-        try:
-            f.write("%s:%s;\n" % ("POSTIONS ", position_line.split("\n")[0]))      # original key spelling kept
-        except Exception:
-            f.write("%s:%s;\n" % ("POSTIONS ", ""))
-        f.write("%s:%s;\n" % ("COMPUTER ID ", host_name))
-        f.write("%s:%s;\n" % ("Start Time ", start_time))
+    fps = float(Config.TARGET_FPS)
+    e_r_cfg = float(Config.ELEV_RESOLUTION_MM)              # desired mm per frame
+    v_mm_s = float(Config.TRAVEL_SPEED_X_MM_PER_S)          # mm/s (informational)
 
-    print("min frames", min_required_frames)
-    print("time_interval_sampling", time_interval_sampling)
-    print("correction_factor_sampling", correction_factor_sampling)
-    print("Sampling: ", total_samples)
+    # Effective mm per frame: prefer configured ELEV_RESOLUTION_MM;
+    # if not set/invalid, estimate from motion & fps.
+    e_r_eff = e_r_cfg if e_r_cfg > 0 else max(1e-6, v_mm_s / max(fps, 1e-6))
 
-    # ── DLL load & init (unchanged behavior; just uses Config.dll_path()) ─────
+    # Dynamic frame count from distance:
+    n_samples = int(math.ceil(dx_mm / e_r_eff))
+    n_samples = max(1, n_samples)
+
+    # Timing pacing from fps:
+    sample_time_ms = 1000.0 / max(fps, 1e-9)
+
+    print(f"[record] X-range: {scan_x0:.3f} → {scan_x1:.3f}  (dx={dx_mm:.3f} mm)")
+    print(f"[record] e_r (cfg)={e_r_cfg:.6f} mm/frame, v={v_mm_s:.3f} mm/s, fps={fps:.3f} Hz")
+    print(f"[record] Using e_r_eff={e_r_eff:.6f} mm/frame → Sampling (frames): {n_samples}")
+
+    # ── DLL load & init ───────────────────────────────────────────────────────
     dll_path = str(Config.dll_path())
     usgfw2 = cdll.LoadLibrary(dll_path)
     usgfw2.on_init()
     ERR = usgfw2.init_ultrasound_usgfw2()
-
     if ERR == 2:
-        print("Main Usgfw2 library object not created")
-        usgfw2.Close_and_release()
-        sys.exit(1)
+        print("Main Usgfw2 library object not created"); usgfw2.Close_and_release(); sys.exit(1)
 
     ERR = usgfw2.find_connected_probe()
     if ERR != 101:
-        print("Probe not detected")
-        usgfw2.Close_and_release()
-        sys.exit(1)
+        print("Probe not detected"); usgfw2.Close_and_release(); sys.exit(1)
 
     ERR = usgfw2.data_view_function()
     if ERR < 0:
-        print("Main ultrasound scanning object for selected probe not created")
-        sys.exit(1)
+        print("Main ultrasound scanning object for selected probe not created"); sys.exit(1)
 
     ERR = usgfw2.mixer_control_function(0, 0, w, h, 0, 0, 0)
     if ERR < 0:
-        print("B mixer control not returned")
-        sys.exit(1)
+        print("B mixer control not returned"); sys.exit(1)
 
-    # Query initial resolution (same)
-    res_X = c_float(0.0)
-    res_Y = c_float(0.0)
+    # Query initial resolution (reported by SDK)
+    res_X = c_float(0.0); res_Y = c_float(0.0)
     usgfw2.get_resolution(pointer(res_X), pointer(res_Y))
-    old_resolution_x = res_X.value
-    old_resolution_y = res_Y.value
+    old_resolution_x = res_X.value; old_resolution_y = res_Y.value
     print(old_resolution_y, old_resolution_x)
 
-    # Pre-allocate and append these two to config.txt (as before)
+    # Write config.txt (original order + scan-path annotation)
+    cfg_path = (measurement_dir / "config.txt").resolve()
+    host_name = platform.node()
+    with cfg_path.open("a", encoding="utf-8") as f:
+        f.write("W:%s;\n" % w)
+        f.write("H:%s;\n" % h)
+        f.write("e_r setpoint:%s;\n" % e_r_cfg)
+        f.write("dx:%s;\n" % dx_mm)
+        f.write("total_samples:%s;\n" % n_samples)
+        f.write("frame_rate_aim:%s;\n" % fps)
+        f.write("delay at SS:%s;\n" % int(Config.DELAY_BEFORE_RECORD_S))
+        f.write("scan speed :%s;\n" % int(Config.SCAN_SPEED_MM_PER_MIN))
+        f.write("ID :%s;\n" % measurement_dir.name)
+        try:
+            f.write("POSTIONS :%s;\n" % (position_line.split("\n")[0]))
+        except Exception:
+            f.write("POSTIONS :;\n")
+        f.write("COMPUTER ID :%s;\n" % host_name)
+        f.write("Start Time :%s;\n" % start_time)
+        # extra annotations
+        f.write("SCAN_MODE:%s;\n" % scan_mode)
+        f.write("X0_mm:%s;\n" % scan_x0)
+        f.write("X1_mm:%s;\n" % scan_x1)
+        f.write("Xres:%s;\n" % old_resolution_x)
+        f.write("Yres:%s;\n" % old_resolution_y)
+
+    # Pre-allocate pixel buffer
     p_array = (c_uint32 * w * h * 4)()
     t_list: list[float] = []
-    with (measurement_dir / "config.txt").open("a", encoding="utf-8") as f:
-        f.write("%s:%s;\n" % ("Xres", old_resolution_x))
-        f.write("%s:%s;\n" % ("Yres", old_resolution_y))
 
-    # ── acquisition loop (identical logic) ────────────────────────────────────
-    for i in range(0, n_samples):
-        loop_start = time.time()
+    # ── acquisition loop ──────────────────────────────────────────────────────
+    frames_written = 0
+    try:
+        for i in range(n_samples):
+            if _should_stop():
+                print("[record] stop requested — breaking")
+                break
 
-        usgfw2.return_pixel_values(pointer(p_array))  # Get pixels
+            loop_start = time.time()
 
-        buffer_as_numpy_array = np.frombuffer(p_array, np.uint32)
-        reshaped_array = np.reshape(buffer_as_numpy_array, (w, h, 4))
+            usgfw2.return_pixel_values(pointer(p_array))  # Grab pixels
 
-        usgfw2.get_resolution(pointer(res_X), pointer(res_Y))  # Get resolution
+            buf = np.frombuffer(p_array, np.uint32)
+            reshaped = np.reshape(buf, (w, h, 4))
 
-        # save first channel as uint32 .npy in measurement_directory
-        np.save(str(measurement_dir / f"{i}"), reshaped_array[:, :, 0].astype(np.uint32))
+            usgfw2.get_resolution(pointer(res_X), pointer(res_Y))  # refresh res if needed
 
-        if i % 10 == 0:
-            print(i)
+            # save first channel as uint32 .npy
+            np.save(str(measurement_dir / f"{i}"), reshaped[:, :, 0].astype(np.uint32))
+            frames_written += 1
 
-        endtime = time.time()
-        deltatime_ms = (endtime - loop_start) * 1000.0  # ms
+            if i % 10 == 0:
+                print(i)
+
+            # pace by fps
+            elapsed_ms = (time.time() - loop_start) * 1000.0
+            sleep_ms = sample_time_ms - elapsed_ms
+            if sleep_ms > 0:
+                time.sleep(sleep_ms / 1000.0)
+
+            t_list.append((time.time() - loop_start) * 1000.0)
+    finally:
+        try: usgfw2.Freeze_ultrasound_scanning()
+        except Exception: pass
+        try: usgfw2.Stop_ultrasound_scanning()
+        except Exception: pass
+        try: usgfw2.Close_and_release()
+        except Exception: pass
+
+    # Spawn imconv only if we actually captured frames and not force-stopped
+    if frames_written > 0 and not _STOP:
         try:
-            time.sleep((sample_time_ms - deltatime_ms) / 1000.0)
-        except ValueError:
-            # if negative, skip sleeping
-            pass
+            sp.Popen([sys.executable, "-m", "app.scripts.imconv"], cwd=str(Config.BASE_DIR))
+        except Exception as e:
+            print(f"[record] ⚠ failed to spawn imconv: {e}")
+    else:
+        print("[record] imconv not started (no frames or stop).")
 
-        t_list.append((time.time() - loop_start) * 1000.0)
-
-    # ── tear down (unchanged) ─────────────────────────────────────────────────
-    usgfw2.Freeze_ultrasound_scanning()
-    usgfw2.Stop_ultrasound_scanning()
+    # Stats + clear flag
     try:
-        usgfw2.Close_and_release()
-    except Exception:
-        pass
-
-    # Start imconv as a separate process (same behavior)
-    try:
-        sp.Popen([sys.executable, "-m", "app.scripts.imconv"], cwd=str(Config.BASE_DIR))
-    except Exception as e:
-        print(f"[record] ⚠ failed to spawn imconv: {e}")
-
-    # Simple stats (unchanged)
-    try:
-        t_arr = np.array(t_list, dtype=float)
-        print(np.mean(t_arr), np.std(t_arr))
+        if t_list:
+            t_arr = np.array(t_list, dtype=float)
+            print(np.mean(t_arr), np.std(t_arr))
     except Exception:
         pass
 
     try:
-        del usgfw2
+        Config.SCANNING_FLAG_FILE.write_text("0")
     except Exception:
         pass
 

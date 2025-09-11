@@ -1,14 +1,17 @@
+
+#There is two thing to be fixed: 1. the keyboard active during active screen. 2. apply M400 for many progrestions
 # app/main.py
 from __future__ import annotations
 
 import os
 import sys
 import time
+import json
 import queue
 import threading
 import subprocess as sp
 from pathlib import Path
-from typing import Tuple, Iterable
+from typing import Tuple, Iterable, Optional
 
 from flask import Flask, Response, jsonify, render_template, request
 
@@ -68,6 +71,9 @@ else:
 # Always have a reliable root (works in dev and PyInstaller due to Config)
 PROJECT_ROOT = Path(getattr(Config, "BASE_DIR", Path(__file__).resolve().parents[1]))
 
+# Keep track of child processes we spawn (recorders / mergers) to kill on exit
+_CHILD_PROCS: list[sp.Popen] = []
+
 # ------------------------------------------------------------------------------
 # Flask app
 # ------------------------------------------------------------------------------
@@ -122,7 +128,6 @@ def _ultrasound_mjpeg_stream() -> Iterable[bytes]:
                     b"--frame\r\n"
                     b"Content-Type: image/jpeg\r\n\r\n" + frame + b"\r\n\r\n"
                 )
-            # If generator ever returns (it shouldn't), loop and restart
         except Exception as e:
             print(f"[ultrasound stream] error (will retry): {e}")
             time.sleep(0.5)  # backoff before retry
@@ -247,18 +252,12 @@ def api_us_restart():
       - re-init the ultrasound stack
     """
     try:
-        try:
-            ultrasound_sdk.freeze()
-        except Exception:
-            pass
-        try:
-            ultrasound_sdk.stop()
-        except Exception:
-            pass
-        try:
-            ultrasound_sdk.close()
-        except Exception:
-            pass
+        try: ultrasound_sdk.freeze()
+        except Exception: pass
+        try: ultrasound_sdk.stop()
+        except Exception: pass
+        try: ultrasound_sdk.close()
+        except Exception: pass
 
         time.sleep(0.3)
         ultrasound_sdk.initialize_ultrasound()
@@ -328,91 +327,145 @@ def initscanner():
         return jsonify(success=False, message=f"INIT crashed: {e}"), 500
 
 # ------------------------------------------------------------------------------
-# Single-scan orchestration (unchanged)
+# Scan plan helpers
 # ------------------------------------------------------------------------------
-# def _start_scan(multi: bool):
-#     scanning_f, multisweep_f, _ = _flag_paths()
-#     _set_flag(scanning_f, "1")
-#     _set_flag(multisweep_f, "1" if multi else "0")
+def _normalize_x_range(start: float, end: float) -> tuple[float, float]:
+    xmax = float(getattr(Config, "X_MAX", 118.0))
+    s = max(0.0, min(xmax, float(start)))
+    e = max(0.0, min(xmax, float(end)))
+    if e <= s:
+        e = min(xmax, s + 1.0)  # ensure non-zero forward span
+    return (s, e)
 
-#     pssc.go2StartScan()
-#     time.sleep(4)
+def _parse_scan_query() -> tuple[float, float, str]:
+    """
+    Parse /scanpath?start=&end=&mode=…
+    Accepts start/end or x0/x1; mode=long|short|custom can be used to fill defaults.
+    Returns clamped (x0, x1, mode).
+    """
+    xmax = float(getattr(Config, "X_MAX", 118.0))
+    mode = (request.args.get("mode") or "").strip().lower()
 
-#     rec_path = (Config.APP_DIR / "scripts" / "record.py").resolve()
-#     python_exe = getattr(Config, "PYTHON_EXE", sys.executable)
-#     try:
-#         sp.Popen([python_exe, str(rec_path), "1" if multi else "0"], cwd=str(PROJECT_ROOT))
-#     except Exception as e:
-#         print(f"[scan] failed to spawn recorder: {e}")
+    def _f(name: str) -> Optional[float]:
+        v = request.args.get(name, default=None, type=float)
+        if v is None:
+            return None
+        return max(0.0, min(xmax, v))
 
-#     delay_s = int(getattr(Config, "DELAY_BEFORE_RECORD_S", 9))
-#     time.sleep(delay_s)
-#     pssc.ScanPath()
+    s = _f("start")
+    e = _f("end")
+    if s is None: s = _f("x0")
+    if e is None: e = _f("x1")
 
-#     newest = _newest_data_folder_name()
-#     return render_template(
-#         "scanning.html",
-#         link2files=str(Config.DATA_DIR / newest),
-#         linkshort=newest,
-#     )
+    if s is None or e is None:
+        if mode == "short":
+            s, e = 15.0, min(90.0, xmax)
+        elif mode == "long" or mode == "":
+            s, e = 0.0, xmax
+        else:
+            s, e = 0.0, xmax
+            mode = "long"
 
-# @app.route("/scanpath")
-# def scanpath():
-#     return _start_scan(multi=False)
-def _start_scan(multi: bool):
+    x0, x1 = _normalize_x_range(s, e)
+
+    if mode not in {"long", "short", "custom"}:
+        if abs(x0 - 0.0) < 1e-6 and abs(x1 - xmax) < 1e-6:
+            mode = "long"
+        elif abs(x0 - 15.0) < 1e-6 and abs(x1 - min(90.0, xmax)) < 1e-6:
+            mode = "short"
+        else:
+            mode = "custom"
+    return (x0, x1, mode)
+
+# ------------------------------------------------------------------------------
+# Single-scan orchestration
+# ------------------------------------------------------------------------------
+def _persist_scanplan(x0: float, x1: float, mode: str) -> None:
+    plan = {"x0": x0, "x1": x1, "mode": mode}
+    try:
+        Config.SCANPLAN_FILE.write_text(json.dumps(plan), encoding="utf-8")
+        print(f"[/scan] wrote scanplan.json: {plan}")
+    except Exception as e:
+        print(f"[scan] couldn't write scanplan.json: {e}")
+
+def _launch_recorder(multi: bool, x0: float, x1: float, pos_str: str) -> None:
+    """Spawn record.py and remember the process so we can kill it on exit."""
+    rec_path = (Config.APP_DIR / "scripts" / "record.py").resolve()
+    python_exe = getattr(Config, "PYTHON_EXE", sys.executable)
+
+    env = os.environ.copy()
+    env["REC_POSITION_STR"] = pos_str
+    # Set both naming styles for maximum compatibility with record.py
+    env["SCAN_X0"] = str(x0)
+    env["SCAN_X1"] = str(x1)
+    env["SCAN_START_X"] = env["SCAN_X0"]
+    env["SCAN_END_X"] = env["SCAN_X1"]
+    env["SCAN_MODE"] = "custom"
+
+    try:
+        proc = sp.Popen([python_exe, str(rec_path), "1" if multi else "0"],
+                        cwd=str(PROJECT_ROOT), env=env)
+        _CHILD_PROCS.append(proc)
+    except Exception as e:
+        print(f"[scan] failed to spawn recorder: {e}")
+
+def _start_scan(multi: bool, start_x: float | None = None, end_x: float | None = None):
     scanning_f, multisweep_f, _ = _flag_paths()
     _set_flag(scanning_f, "1")
     _set_flag(multisweep_f, "1" if multi else "0")
 
-    pssc.go2StartScan()
+    xmax = float(getattr(Config, "X_MAX", 118.0))
+    if start_x is None or end_x is None:
+        x0, x1, mode = 0.0, xmax, "long"
+    else:
+        x0, x1 = _normalize_x_range(start_x, end_x)
+        mode = "custom" if not (abs(x0 - 0.0) < 1e-6 and abs(x1 - xmax) < 1e-6) else "long"
+
+    # Persist the operator selection for recorder (file + env)
+    _persist_scanplan(x0, x1, mode)
+
+    # Move to chosen start X
+    try:
+        pssc.go2StartScan(x0)
+    except Exception as e:
+        print(f"[scan] go2StartScan failed: {e}")
     time.sleep(4)
 
-    # --- NEW: capture current position string in THIS process (serial is live here)
+    # Capture current position (best-effort)
     pos_str = ""
     try:
-        pos_val = pssc.get_position()  # many firmwares return list[str]
-        if isinstance(pos_val, (list, tuple)):
+        pos_val = pssc.get_position()
+        if isinstance(pos_val, (list, tuple)) and pos_val:
             pos_str = str(pos_val[0]).split("\n")[0]
         elif isinstance(pos_val, str):
             pos_str = pos_val.split("\n")[0]
-        # per-axis fallback if the above came back empty
         if not pos_str:
-            x = pssc.get_position_axis("X")
-            y = pssc.get_position_axis("Y")
-            z = pssc.get_position_axis("Z")
+            x = pssc.get_position_axis("X"); y = pssc.get_position_axis("Y"); z = pssc.get_position_axis("Z")
             if None not in (x, y, z):
                 pos_str = f"X{float(x):.3f} Y{float(y):.3f} Z{float(z):.3f}"
     except Exception:
         pass
 
-    rec_path   = (Config.APP_DIR / "scripts" / "record.py").resolve()
-    python_exe = getattr(Config, "PYTHON_EXE", sys.executable)
+    _launch_recorder(multi, x0, x1, pos_str)
 
-    # --- NEW: pass position to record.py via environment
-    env = os.environ.copy()
-    env["REC_POSITION_STR"] = pos_str
-
-    try:
-        sp.Popen([python_exe, str(rec_path), "1" if multi else "0"],
-                 cwd=str(PROJECT_ROOT),
-                 env=env)  # ← pass env!
-    except Exception as e:
-        print(f"[scan] failed to spawn recorder: {e}")
-
+    # Let recorder spin up, then execute the motion
     delay_s = int(getattr(Config, "DELAY_BEFORE_RECORD_S", 9))
     time.sleep(delay_s)
-    pssc.ScanPath()
+    try:
+        pssc.ScanPath(x0, x1)
+    except Exception as e:
+        print(f"[scan] ScanPath failed: {e}")
 
     newest = _newest_data_folder_name()
-    return render_template(
-        "scanning.html",
-        link2files=str(Config.DATA_DIR / newest),
-        linkshort=newest,
-    )
+    return render_template("scanning.html", link2files=str(Config.DATA_DIR / newest), linkshort=newest)
 
+@app.route("/scanpath", methods=["GET"])
+def scanpath():
+    x0, x1, _mode = _parse_scan_query()
+    return _start_scan(multi=False, start_x=x0, end_x=x1)
 
 # ------------------------------------------------------------------------------
-# MultiSweep orchestration (two scans + merge) — legacy behavior replicated
+# MultiSweep orchestration (now uses the SAME scan range logic as single sweep)
 # ------------------------------------------------------------------------------
 def _is_scanning() -> bool:
     try:
@@ -439,60 +492,76 @@ def _latest_two_scan_dirs():
     except Exception:
         return (None, None)
 
-def _run_multisweep_sequence() -> tuple[bool, str]:
-    """
-    1) Y -= 10, scan (multi=True) → wait
-    2) Y += 20, scan (multi=True) → wait
-    3) spawn scripts/multisweep.py (merges into older dir)
-    Returns (ok, folder_name_to_show or error_message).
-    """
+def _run_multisweep_sequence(start_x: float | None = None, end_x: float | None = None) -> tuple[bool, str]:
     try:
-        # Sweep 1: small negative Y offset
+        # Sweep 1: Y offset -
         pssc.deltaMove(-10.0, "Y")
         time.sleep(4.0)
-        _start_scan(multi=True)  # kicks off record.py with multisweep flag set
+        _start_scan(multi=True, start_x=start_x, end_x=end_x)
         if not _wait_until_not_scanning():
             return False, "Timeout waiting for sweep #1 to finish"
 
-        # Sweep 2: opposite side
+        # Sweep 2: Y offset +
         pssc.deltaMove(+20.0, "Y")
         time.sleep(2.0)
-        _start_scan(multi=True)
+        _start_scan(multi=True, start_x=start_x, end_x=end_x)
         if not _wait_until_not_scanning():
             return False, "Timeout waiting for sweep #2 to finish"
 
-        # Identify the two latest scan dirs before merge output reshuffles things
         older, newer = _latest_two_scan_dirs()
         if older is None or newer is None:
             return False, "Not enough scan folders for MultiSweep merge"
 
-        # Merge (writes into 'older' dir, then cleans up 'newer')
         multi_path = (Config.APP_DIR / "scripts" / "multisweep.py").resolve()
         python_exe = getattr(Config, "PYTHON_EXE", sys.executable)
-        try:
-            sp.Popen([python_exe, str(multi_path)], cwd=str(PROJECT_ROOT))
-        except Exception as e:
-            return False, f"Failed to spawn multisweep: {e}"
+        sp.Popen([python_exe, str(multi_path)], cwd=str(PROJECT_ROOT))
 
-        # Give the merger a moment to produce Example_slices.png (non-blocking)
         time.sleep(2.0)
         return True, older.name
 
     except Exception as e:
         return False, f"MultiSweep error: {e}"
 
-@app.route("/multipath")
+
+@app.route("/multipath", methods=["GET", "POST"])
 def multipath():
-    ok, payload = _run_multisweep_sequence()
+    xmax = float(getattr(Config, "X_MAX", 118.0))
+    data = request.get_json(silent=True) or {}
+    mode = (request.args.get("mode") or data.get("mode") or "").lower()
+
+    def _get(name):
+        v = request.args.get(name, type=float)
+        if v is None:
+            v = data.get(name, None)
+        if v is None:
+            return None
+        return max(0.0, min(xmax, float(v)))
+
+    # accept both naming styles
+    s = _get("start") or _get("x0")
+    e = _get("end")   or _get("x1")
+
+    # preset by mode if range not given
+    if (s is None or e is None) and mode in {"long", "short"}:
+        if mode == "short":
+            s, e = 15.0, min(90.0, xmax)
+        else:  # long
+            s, e = 0.0, xmax
+
+    if s is not None and e is not None and e <= s:
+        return jsonify(success=False, message="end must be > start"), 400
+
+    ok, payload = _run_multisweep_sequence(start_x=s, end_x=e)
     if not ok:
         return jsonify(success=False, message=str(payload)), 500
 
-    folder = payload  # the older dir where merged output lives
+    folder = payload
     return render_template(
         "scanning.html",
         link2files=str(Config.DATA_DIR / folder),
         linkshort=folder,
     )
+
 
 # Legacy hook (button now opens a picker, but keep this endpoint harmless)
 @app.route("/overViewImage", methods=["POST"])
@@ -525,7 +594,6 @@ def api_overview_list():
     data_dir = Config.DATA_DIR
     items = {}
     try:
-        # newest first (folder names are timestamps)
         out = []
         for p in sorted([d for d in data_dir.iterdir() if d.is_dir()],
                         key=lambda x: x.name, reverse=True):
@@ -566,10 +634,40 @@ def api_overview_open():
         return jsonify(success=False, message=str(e)), 500
 
 # ------------------------------------------------------------------------------
+# Health
+# ------------------------------------------------------------------------------
+@app.route("/health")
+def health():
+    return jsonify(ok=True)
+
+# ------------------------------------------------------------------------------
 # Graceful Exit API
 # ------------------------------------------------------------------------------
 _APP_SHUTTING_DOWN = False
 _WEBVIEW_WINDOW = None  # type: ignore
+
+def _terminate_children():
+    """Best-effort termination of spawned child processes."""
+    for proc in list(_CHILD_PROCS):
+        try:
+            if proc.poll() is None:
+                proc.terminate()
+        except Exception:
+            pass
+    # give them a moment
+    t0 = time.time()
+    while time.time() - t0 < 1.5:
+        alive = [p for p in _CHILD_PROCS if p.poll() is None]
+        if not alive:
+            break
+        time.sleep(0.1)
+    # kill any stubborn ones
+    for proc in list(_CHILD_PROCS):
+        try:
+            if proc.poll() is None:
+                proc.kill()
+        except Exception:
+            pass
 
 def _graceful_shutdown_async():
     """Best-effort cleanup, then terminate the process."""
@@ -580,6 +678,12 @@ def _graceful_shutdown_async():
     print("[Shutdown] initiating…")
 
     try:
+        # 0) Tell recorders to stop ASAP
+        try:
+            Config.SCANNING_FLAG_FILE.write_text("0")
+        except Exception:
+            pass
+
         # 1) Disable keyboard control (ignore if not available)
         try:
             enable_keyboard(False)  # no-op if stubbed
@@ -615,7 +719,10 @@ def _graceful_shutdown_async():
         except Exception as e:
             print("[Shutdown] close_serial error:", e)
 
-        # 5) Clear simple flag files (best effort)
+        # 5) Terminate child worker processes we spawned
+        _terminate_children()
+
+        # 6) Clear simple flag files (best effort)
         try:
             for f in (Config.SCANNING_FLAG_FILE, Config.MULTISWEEP_FLAG_FILE):
                 try:
@@ -625,7 +732,7 @@ def _graceful_shutdown_async():
         except Exception:
             pass
 
-        # 6) Close the desktop window if we’re in pywebview
+        # 7) Close the desktop window if we’re in pywebview
         if _HAS_WEBVIEW:
             try:
                 webview.destroy_window()  # thread-safe in recent pywebview
@@ -703,7 +810,6 @@ def _launch_desktop():
     else:
         print("[Desktop] pywebview not installed. Opening browser instead.")
         webbrowser.open(url)
-
 
 # ------------------------------------------------------------------------------
 # Entrypoint

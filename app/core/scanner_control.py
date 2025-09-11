@@ -396,14 +396,45 @@ def go2INIT() -> Tuple[bool, str]:
         raise
 
 
-def go2StartScan() -> bool:
-    """Prepare for scan; move to X=0 at fast feed."""
+# def go2StartScan() -> bool:
+#     """Prepare for scan; move to X=0 at fast feed."""
+#     if not _ensure_connected():
+#         return False
+#     try:
+#         _ensure_units_and_absolute()
+#         feedrate(float(getattr(Config, "FAST_FEED_MM_PER_MIN", 1200)))
+#         send_gcode("G0 X0")
+#         wait_for_motion_complete(10.0)
+#         return True
+#     except Exception as exc:
+#         print(f"[go2StartScan] {exc}")
+#         return False
+
+
+# def ScanPath() -> bool:
+#     """Traverse X across full span at configured scan feed."""
+#     if not _ensure_connected():
+#         return False
+#     try:
+#         _ensure_units_and_absolute()
+#         scan_feed = float(getattr(Config, "SCAN_SPEED_MM_PER_MIN", 90))
+#         feedrate(scan_feed)
+#         send_gcode(f"G0 X{float(Config.X_MAX):.3f}")
+#         # generous timeout for full-span move
+#         wait_for_motion_complete(120.0)
+#         return True
+#     except Exception as exc:
+#         print(f"[ScanPath] {exc}")
+#         return False
+def go2StartScan(start_x: float | None = None) -> bool:
+    """Move to start_x (or X=0) at fast feed."""
     if not _ensure_connected():
         return False
     try:
         _ensure_units_and_absolute()
         feedrate(float(getattr(Config, "FAST_FEED_MM_PER_MIN", 1200)))
-        send_gcode("G0 X0")
+        x0 = 0.0 if start_x is None else max(0.0, min(float(Config.X_MAX), float(start_x)))
+        send_gcode(f"G0 X{x0:.3f}")
         wait_for_motion_complete(10.0)
         return True
     except Exception as exc:
@@ -411,17 +442,35 @@ def go2StartScan() -> bool:
         return False
 
 
-def ScanPath() -> bool:
-    """Traverse X across full span at configured scan feed."""
+def ScanPath(start_x: float | None = None, end_x: float | None = None) -> bool:
+    """
+    Traverse X from start_x to end_x at the (possibly computed) scan feed.
+    Defaults to legacy 0 → X_MAX if None.
+    """
     if not _ensure_connected():
         return False
     try:
         _ensure_units_and_absolute()
-        scan_feed = float(getattr(Config, "SCAN_SPEED_MM_PER_MIN", 90))
+        # feedrate F = 60 * (e_r * fps) if enabled
+        if bool(getattr(Config, "SCAN_FEED_FROM_ER_FPS", True)):
+            scan_feed = float(Config.computed_scan_feed_mm_per_min())
+        else:
+            scan_feed = float(getattr(Config, "SCAN_SPEED_MM_PER_MIN", 90))
         feedrate(scan_feed)
-        send_gcode(f"G0 X{float(Config.X_MAX):.3f}")
-        # generous timeout for full-span move
-        wait_for_motion_complete(120.0)
+
+        x0 = 0.0 if start_x is None else float(start_x)
+        x1 = float(getattr(Config, "X_MAX", 118.0)) if end_x is None else float(end_x)
+        x0 = max(0.0, min(float(Config.X_MAX), x0))
+        x1 = max(0.0, min(float(Config.X_MAX), x1))
+
+        send_gcode(f"G0 X{x0:.3f}")
+        wait_for_motion_complete(10.0)
+
+        send_gcode(f"G0 X{x1:.3f}")
+        # generous timeout: distance / (feed mm/min) * 60 + margin
+        dist = abs(x1 - x0)
+        secs = (dist / max(scan_feed, 1e-6)) * 60.0 + 30.0
+        wait_for_motion_complete(secs)
         return True
     except Exception as exc:
         print(f"[ScanPath] {exc}")

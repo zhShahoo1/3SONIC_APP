@@ -8,9 +8,9 @@
   <!-- Icons -->
   <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css"/>
   <link rel="stylesheet" href="{{ url_for('static', filename='css/app.css') }}">
-  <!-- Google Fonts: Montserrat Light -->
-   <link href="https://fonts.googleapis.com/css2?family=Montserrat:wght@300&display=swap" rel="stylesheet">
 
+  <!-- Google Fonts: Montserrat Light -->
+  <link href="https://fonts.googleapis.com/css2?family=Montserrat:wght@300&display=swap" rel="stylesheet">
 </head>
 <body>
 <header>
@@ -36,18 +36,62 @@
 <main>
   <!-- Left panel -->
   <section class="scanner-controls">
+    <!-- Scan path presets -->
+    <!-- <div class="automatic-controls" style="margin-top:0">
+      <h2>Scan Path</h2>
+      <form id="scan-options" autocomplete="off">
+        <fieldset style="border:none; padding:0; margin:0 0 10px 0;">
+          <label style="display:flex; align-items:center; gap:8px; margin:.25rem 0;">
+            <input type="radio" name="scan_mode" value="long" checked />
+            <span>Long &nbsp;<small style="opacity:.8">(X: 0 → {{ config.X_MAX|int if config else 118 }})</small></span>
+          </label>
+          <label style="display:flex; align-items:center; gap:8px; margin:.25rem 0;">
+            <input type="radio" name="scan_mode" value="short" />
+            <span>Short &nbsp;<small style="opacity:.8">(X: 15 → 90)</small></span>
+          </label>
+          <label style="display:flex; align-items:center; gap:8px; margin:.25rem 0;">
+            <input type="radio" name="scan_mode" value="custom" />
+            <span>Custom range</span>
+          </label>
+        </fieldset>
+
+        <div id="custom-range" style="display:grid; grid-template-columns:1fr 1fr; gap:.5rem; margin:.25rem 0 0 1.6rem;">
+          <div>
+            <label for="x_start" style="font-size:.85rem; opacity:.9;">X start (mm)</label>
+            <input id="x_start" name="x_start" type="number" step="0.1" min="0" max="{{ config.X_MAX if config else 118 }}" value="0" disabled>
+          </div>
+          <div>
+            <label for="x_end" style="font-size:.85rem; opacity:.9;">X end (mm)</label>
+            <input id="x_end" name="x_end" type="number" step="0.1" min="0" max="{{ config.X_MAX if config else 118 }}" value="{{ config.X_MAX if config else 118 }}" disabled>
+          </div>
+        </div>
+
+        <p style="margin:.6rem 0 0; font-size:.8rem; opacity:.85;">
+          <em id="range-summary">Long path selected.</em>
+        </p>
+        <p style="margin:.35rem 0 0; font-size:.75rem; opacity:.7;">
+          Note: Changing the path changes sampling (frames, DICOM length). Keep <code>e<sub>r</sub></code> and FPS consistent with motion.
+        </p>
+      </form>
+    </div> -->
+
     <div class="scan-buttons">
-      <button class="button axis-style start-scan-button" data-action="scan">
-      <i class="fas fa-play-circle"></i> Start Scan
+      <button
+        class="button axis-style start-scan-button"
+        id="start-scan"
+        data-action="scan"
+        data-bind-scan-options="scan-options"
+      >
+        <i class="fas fa-play-circle"></i> Start Scan
       </button>
 
       <button class="button axis-style multi-path-button" data-action="multipath">
-      <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20"
-         viewBox="0 0 50 30" fill="currentColor" style="vertical-align: middle;">
-        <polygon points="0,0 20,15 0,30"></polygon>
-        <polygon points="20,0 40,15 20,30"></polygon>
-      </svg>
-      Dual Sweep
+        <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20"
+             viewBox="0 0 50 30" fill="currentColor" style="vertical-align: middle;">
+          <polygon points="0,0 20,15 0,30"></polygon>
+          <polygon points="20,0 40,15 20,30"></polygon>
+        </svg>
+        Dual Sweep
       </button>
     </div>
 
@@ -56,6 +100,9 @@
       <button class="button" data-action="init">
         <i class="fas fa-cog"></i> Initialize Scanner
       </button>
+      <div style="margin-top:.6rem; display:grid; gap:.5rem;">
+        <button class="button" id="lower-plate-btn"><i class="fas fa-water"></i> Insert Bath</button>
+      </div>
     </div>
 
     <div class="manual-adjustments">
@@ -67,7 +114,7 @@
         <span></span>
 
         <button class="button dpad-btn dpad-left" data-action="x-plus"><i class="fas fa-caret-left"></i></button>
-        <button class="button special" id="lower-plate-btn"><i class="fas fa-water"></i> Insert Bath</button>
+        <span></span>
         <button class="button dpad-btn dpad-right" data-action="x-minus"><i class="fas fa-caret-right"></i></button>
 
         <span></span>
@@ -113,7 +160,10 @@
     <div class="card">
       <div class="card-header"><i class="fas fa-image"></i> <span id="display-title">Ultrasound View</span></div>
       <div class="card-image">
-        <img id="im1" src="{{ url_for('ultrasound_video_feed') }}" alt="Ultrasound" class="dispimg_us" />
+        <div class="stream-wrap">
+          <img id="im1" src="{{ url_for('ultrasound_video_feed') }}" alt="Ultrasound" class="dispimg_us" />
+          <!-- status overlay is injected by JS -->
+        </div>
         <img id="im2" src="{{ url_for('video_feed') }}" alt="Webcam" class="dispimg_us" style="display:none;" />
       </div>
     </div>
@@ -128,17 +178,43 @@
     <div class="adjustment-group">
       <button class="button" data-action="overview"><i class="fas fa-camera"></i> Overview Image</button>
     </div>
+
+    <div class="automatic-controls" style="margin-top:1.25rem">
+      <h2>Acquisition</h2>
+      <div style="font-size:.85rem; opacity:.85; line-height:1.4;">
+        <p style="margin:.35rem 0 0;">
+          <strong>Preset:</strong> <span id="ui-selected-preset">Long</span>
+        </p>
+        <p style="margin:.2rem 0 0;">
+          <strong>Range:</strong> <span id="ui-selected-range">X: 0 → {{ config.X_MAX|int if config else 118 }} mm</span>
+        </p>
+        <p style="margin:.2rem 0 0; opacity:.75;">
+          Values are applied when scan starts.
+        </p>
+      </div>
+    </div>
   </section>
 </main>
 
 <footer>
-  <div><p>Support: fatemeh.makouei@3sonic.com| +45 50243760</p></div>
-  <div><button class="button exit-button" data-action="exit">
-  <i class="fas fa-sign-out-alt"></i> Exit
-</button></div>
+  <div><p>Support: fatemeh.makouei@3sonic.com | +45 50243760</p></div>
+  <div>
+    <button class="button exit-button" data-action="exit">
+      <i class="fas fa-sign-out-alt"></i> Exit
+    </button>
+  </div>
 </footer>
 
+<!-- Minimal modal used by app.js while scan starts -->
+<div id="scanInProgress" class="modal" style="display:none;">
+  <div class="modal-content">
+    <h3 style="margin-top:0;">Preparing scan…</h3>
+    <p>Please wait while the scanner moves into position.</p>
+  </div>
+</div>
+
 <script src="{{ url_for('static', filename='js/app.js') }}"></script>
+
 
 </body>
 </html>

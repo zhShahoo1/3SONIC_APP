@@ -1,18 +1,20 @@
 /* ==========================================================================
-   3SONIC – Frontend Controller
+   3SONIC – Frontend Controller (with Scan-Path picker)
    - Works with Flask routes in main.py
    - Debounced move commands
    - Insert Bath toggle (lower ↔ position-for-scan)
    - Ultrasound auto-reload + status overlay + restart backoff
    - Exit button confirm → /api/exit
    - Overview Image picker (lists scans, open OS viewer or browser)
+   - NEW: Scan-Path selector (Long 0–118, Short 15–90, Custom x0–x1)
+          Persists to localStorage and posts to backend with POST→GET fallback
    ========================================================================== */
 (() => {
   // ------------------------------ Config -----------------------------------
   const ENDPOINTS = {
     init: "/initscanner",
-    scan: "/scanpath",
-    multipath: "/multipath",
+    scan: "/scanpath",            // accepts POST {mode,x0,x1}; falls back to GET with query
+    multipath: "/multipath",      // accepts POST {mode,x0,x1}; falls back to GET with query
     move: "/move_probe",
     openITK: "/open-itksnap",
     lowerPlate: "/api/lower-plate",
@@ -25,11 +27,25 @@
     overviewOpen: "/api/overview/open",
   };
 
+  // Let HTML override max X with: <body data-xmax="118">
+  const XMAX = (() => {
+    const raw =
+      document.body?.dataset?.xmax ??
+      document.documentElement?.dataset?.xmax ??
+      "118";
+    const v = parseFloat(raw);
+    return Number.isFinite(v) ? v : 118;
+  })();
+
+  const DEFAULTS = {
+    long: { x0: 0, x1: XMAX },
+    short: { x0: 15, x1: Math.min(90, XMAX) },
+  };
+
   const SELECTORS = {
     stepSelect: "#distance",
     ultrasoundImg: "#im1",
     webcamImg: "#im2",
-    scanModal: "#scanInProgress",
     buttons: "[data-action]",
     lowerPlateBtn: "#lower-plate-btn",
   };
@@ -63,6 +79,20 @@
     return payload;
   }
 
+  async function postWithGetFallback(url, data) {
+    try { return await apiPostJSON(url, data); }
+    catch (e) {
+      // graceful fallback for older handlers that expect GET
+      const qs = new URLSearchParams(Object.fromEntries(
+        Object.entries(data).map(([k, v]) => [k, String(v)])
+      )).toString();
+      return apiGet(`${url}?${qs}`);
+    }
+  }
+
+  function clamp(v, lo, hi) { return Math.max(lo, Math.min(hi, v)); }
+  function parseNum(s, def = 0) { const v = parseFloat(s); return Number.isFinite(v) ? v : def; }
+
   // ------------------------------ State ------------------------------------
   const state = {
     get step() {
@@ -72,7 +102,35 @@
     },
     insertBathStage: 0, // 0 = Insert Bath -> lower; 1 = Raise Plate to Scan -> position
     view: "ultrasound", // "ultrasound" | "camera"
+    scan: loadScanSettings(),   // {mode: 'long'|'short'|'custom', x0, x1}
   };
+
+  function loadScanSettings() {
+    try {
+      const raw = localStorage.getItem("scanSettings_v2");
+      if (raw) {
+        const s = JSON.parse(raw);
+        // sanitize
+        const mode = (s.mode || "long").toLowerCase();
+        let x0 = parseNum(s.x0, DEFAULTS.long.x0);
+        let x1 = parseNum(s.x1, DEFAULTS.long.x1);
+        if (mode === "short" && (s.x0 == null || s.x1 == null)) {
+          x0 = DEFAULTS.short.x0; x1 = DEFAULTS.short.x1;
+        }
+        if (mode === "long" && (s.x0 == null || s.x1 == null)) {
+          x0 = DEFAULTS.long.x0; x1 = DEFAULTS.long.x1;
+        }
+        if (x1 <= x0) { x1 = clamp(x0 + 1, 0, XMAX); }
+        return { mode: ["long","short","custom"].includes(mode) ? mode : "long", x0: clamp(x0,0,XMAX), x1: clamp(x1,0,XMAX) };
+      }
+    } catch {}
+    return { mode: "long", ...DEFAULTS.long };
+  }
+
+  function saveScanSettings(s) {
+    state.scan = s;
+    try { localStorage.setItem("scanSettings_v2", JSON.stringify(s)); } catch {}
+  }
 
   // --------------------------- UI Helpers ----------------------------------
   function findStreamTitleEl() {
@@ -86,7 +144,6 @@
     const title = findStreamTitleEl();
     if (!title) return;
     // Keep icons; replace only the text node after them
-    // Ensure there’s at least one text node to update
     let textNode = null;
     for (const n of title.childNodes) {
       if (n.nodeType === Node.TEXT_NODE) { textNode = n; break; }
@@ -109,6 +166,126 @@
     setStreamTitle(which === "ultrasound" ? "Ultrasound View" : "Camera View");
   }
 
+  // ----------------------- Scan-Path Modal (on the fly) ---------------------
+  function ensureScanModal() {
+    let modal = document.getElementById("scanOptionsModal");
+    if (modal) return modal;
+
+    modal = document.createElement("div");
+    modal.id = "scanOptionsModal";
+    modal.className = "modal";
+    modal.innerHTML = `
+      <div class="modal-content" style="max-width:560px">
+        <h3 style="margin-bottom:10px;font-weight:300">Scan Path</h3>
+        <div class="scan-grid">
+          <div class="row">
+            <label><input type="radio" name="scan-mode" value="long"> Long (0–${XMAX})</label>
+            <label><input type="radio" name="scan-mode" value="short"> Short (15–${Math.min(90, XMAX)})</label>
+            <label><input type="radio" name="scan-mode" value="custom"> Custom</label>
+          </div>
+          <div class="row custom-row">
+            <label>X start (mm)
+              <input type="number" id="scan-x0" min="0" max="${XMAX}" step="0.1" inputmode="decimal">
+            </label>
+            <label>X end (mm)
+              <input type="number" id="scan-x1" min="0" max="${XMAX}" step="0.1" inputmode="decimal">
+            </label>
+          </div>
+          <div class="hint" id="scan-hint"></div>
+        </div>
+        <div style="display:flex;justify-content:flex-end;gap:8px;margin-top:12px">
+          <button class="button" id="scanCancelBtn" style="width:auto;padding:.5rem .9rem">Cancel</button>
+          <button class="button primary" id="scanStartBtn" style="width:auto;padding:.5rem .9rem">
+            <i class="fas fa-play-circle"></i> Start
+          </button>
+        </div>
+      </div>`;
+    document.body.appendChild(modal);
+
+    // styling (lightweight)
+    const st = document.createElement("style");
+    st.textContent = `
+      .modal{position:fixed;inset:0;background:rgba(0,0,0,.55);display:none;align-items:center;justify-content:center;z-index:9999}
+      .modal-content{background:#2b303b;color:#e5e9f0;border:1px solid rgba(143,188,187,.3);border-radius:12px;padding:16px 18px}
+      .scan-grid .row{display:flex;gap:12px;flex-wrap:wrap;margin:6px 0}
+      .scan-grid label{display:flex;align-items:center;gap:8px}
+      .scan-grid input[type="number"]{width:120px}
+      .scan-grid .hint{font-size:.85rem;opacity:.85;margin-top:6px}
+      .button.primary{background:#3cb3ad;border-color:#3cb3ad}
+    `;
+    document.head.appendChild(st);
+
+    // bind buttons
+    $("#scanCancelBtn", modal).addEventListener("click", () => toggle(modal, false));
+    return modal;
+  }
+
+  function openScanModal(onStart) {
+    const modal = ensureScanModal();
+    const modeEls = $$('input[name="scan-mode"]', modal);
+    const x0El = $("#scan-x0", modal);
+    const x1El = $("#scan-x1", modal);
+    const hint = $("#scan-hint", modal);
+
+    // seed current values
+    const s = state.scan;
+    for (const el of modeEls) el.checked = (el.value === s.mode);
+    if (s.mode === "custom") {
+      x0El.value = String(s.x0 ?? "");
+      x1El.value = String(s.x1 ?? "");
+    } else if (s.mode === "short") {
+      x0El.value = String(DEFAULTS.short.x0);
+      x1El.value = String(DEFAULTS.short.x1);
+    } else {
+      x0El.value = String(DEFAULTS.long.x0);
+      x1El.value = String(DEFAULTS.long.x1);
+    }
+
+    const applyDisabled = () => {
+      const m = getSelectedMode();
+      const custom = m === "custom";
+      x0El.toggleAttribute("disabled", !custom);
+      x1El.toggleAttribute("disabled", !custom);
+      hint.textContent = m === "short"
+        ? `Will scan X=${DEFAULTS.short.x0}→${DEFAULTS.short.x1} mm`
+        : m === "long"
+          ? `Will scan X=${DEFAULTS.long.x0}→${DEFAULTS.long.x1} mm`
+          : `Set a valid range within 0–${XMAX} mm`;
+    };
+
+    function getSelectedMode() {
+      const el = modeEls.find(e => e.checked);
+      return el ? el.value : "long";
+    }
+
+    modeEls.forEach(el => el.addEventListener("change", applyDisabled));
+    applyDisabled();
+
+    $("#scanStartBtn", modal).onclick = () => {
+      const mode = getSelectedMode();
+      let x0, x1;
+      if (mode === "custom") {
+        x0 = clamp(parseNum(x0El.value, 0), 0, XMAX);
+        x1 = clamp(parseNum(x1El.value, XMAX), 0, XMAX);
+        if (!Number.isFinite(x0) || !Number.isFinite(x1) || x1 <= x0) {
+          alert("Custom range must be numeric and X end must be greater than X start.");
+          return;
+        }
+      } else if (mode === "short") {
+        x0 = DEFAULTS.short.x0; x1 = DEFAULTS.short.x1;
+      } else {
+        x0 = DEFAULTS.long.x0; x1 = DEFAULTS.long.x1;
+      }
+
+      const settings = { mode, x0, x1 };
+      saveScanSettings(settings);
+      toggle(modal, false);
+      if (typeof onStart === "function") onStart(settings);
+    };
+
+    toggle(modal, true);
+  }
+
   // --------------------------- Actions (API) --------------------------------
   async function initScanner(btn) {
     setBusy(btn, true);
@@ -117,20 +294,36 @@
     finally { setBusy(btn, false); }
   }
 
-  async function startScan(btn) {
-    const modal = $(SELECTORS.scanModal);
-    setBusy(btn, true); toggle(modal, true);
-    try { await apiGet(ENDPOINTS.scan); console.log("[scan] started"); }
-    catch (e) { console.error("[scan] start failed:", e.message); }
-    finally { setBusy(btn, false); toggle(modal, false); }
+  async function startScan(btn, opts = { prompt: true }) {
+    const run = async (settings) => {
+      setBusy(btn, true);
+      try {
+        await postWithGetFallback(ENDPOINTS.scan, settings);
+        console.log("[scan] started", settings);
+      } catch (e) {
+        console.error("[scan] start failed:", e.message);
+        alert("Failed to start scan: " + e.message);
+      } finally { setBusy(btn, false); }
+    };
+
+    if (opts?.prompt !== false) openScanModal(run);
+    else run(state.scan);
   }
 
-  async function startMultiPath(btn) {
-    const modal = $(SELECTORS.scanModal);
-    setBusy(btn, true); toggle(modal, true);
-    try { await apiGet(ENDPOINTS.multipath); console.log("[multipath] started"); }
-    catch (e) { console.error("[multipath] start failed:", e.message); }
-    finally { setBusy(btn, false); toggle(modal, false); }
+  async function startMultiPath(btn, opts = { prompt: true }) {
+    const run = async (settings) => {
+      setBusy(btn, true);
+      try {
+        await postWithGetFallback(ENDPOINTS.multipath, settings);
+        console.log("[multipath] started", settings);
+      } catch (e) {
+        console.error("[multipath] start failed:", e.message);
+        alert("Failed to start dual sweep: " + e.message);
+      } finally { setBusy(btn, false); }
+    };
+
+    if (opts?.prompt !== false) openScanModal(run);
+    else run(state.scan);
   }
 
   async function openITKSnap(btn) {
@@ -221,11 +414,15 @@
   function bindButtons() {
     $$(SELECTORS.buttons).forEach((btn) => {
       const action = btn.dataset.action;
-      btn.addEventListener("click", () => {
+      btn.addEventListener("click", (ev) => {
+        // Holding Shift will reuse last scan settings and skip the dialog
+        const quick = ev.shiftKey;
         switch (action) {
           case "init": return initScanner(btn);
-          case "scan": return startScan(btn);
-          case "multipath": return startMultiPath(btn);
+          // case "scan": return startScan(btn, { prompt: !quick });
+          // case "multipath": return startMultiPath(btn, { prompt: !quick });
+          case "scan": return startScan(btn, { prompt: true });
+          case "multipath": return startMultiPath(btn, { prompt: true });
           case "open-itk": return openITKSnap(btn);
           case "overview": return overviewImage(btn);
 
@@ -250,28 +447,33 @@
 
   // Keyboard shortcuts
   function bindKeyboard() {
-    // const map = new Map([
-    //   ["ArrowLeft", () => sendMove("Xminus", state.step)],
-    //   ["ArrowRight", () => sendMove("Xplus", state.step)],
-    //   ["ArrowUp", () => sendMove("Yminus", state.step)],
-    //   ["ArrowDown", () => sendMove("Yplus", state.step)],
-    //   ["PageUp", () => sendMove("Zplus", state.step)],
-    //   ["PageDown", () => sendMove("Zminus", state.step)],
+    const map = new Map([
+      ["ArrowLeft", () => sendMove("Xminus", state.step)],
+      ["ArrowRight", () => sendMove("Xplus", state.step)],
+      ["ArrowUp", () => sendMove("Yminus", state.step)],
+      ["ArrowDown", () => sendMove("Yplus", state.step)],
+      ["PageUp", () => sendMove("Zplus", state.step)],
+      ["PageDown", () => sendMove("Zminus", state.step)],
 
-    //   ["a", () => sendMove("Xminus", state.step)],
-    //   ["d", () => sendMove("Xplus", state.step)],
-    //   ["w", () => sendMove("Yminus", state.step)],
-    //   ["s", () => sendMove("Yplus", state.step)],
+      ["a", () => sendMove("Xminus", state.step)],
+      ["d", () => sendMove("Xplus", state.step)],
+      ["w", () => sendMove("Yminus", state.step)],
+      ["s", () => sendMove("Yplus", state.step)],
 
-    //   ["r", () => rotateCW(state.step)],
-    //   ["f", () => rotateCCW(state.step)],
+      ["r", () => rotateCW(state.step)],
+      ["f", () => rotateCCW(state.step)],
 
-    //   ["1", () => setStep(0.1)],
-    //   ["2", () => setStep(1)],
-    //   ["3", () => setStep(10)],
-    //   ["[", () => cycleStep(-1)],
-    //   ["]", () => cycleStep(+1)],
-    // ]);
+      ["1", () => setStep(0.1)],
+      ["2", () => setStep(1)],
+      ["3", () => setStep(3)],
+      ["4", () => setStep(5)],
+      ["5", () => setStep(10)],
+      ["[", () => cycleStep(-1)],
+      ["]", () => cycleStep(+1)],
+
+      // quick actions
+      // ["Enter", () => startScan(null, { prompt: false })],
+    ]);
 
     window.addEventListener("keydown", (ev) => {
       const tag = (ev.target?.tagName || "").toLowerCase();
@@ -518,7 +720,7 @@
 
   document.addEventListener("DOMContentLoaded", init);
 
-  // ----------------------- Minimal Styles (spinner fallback) -----------------
+  // ----------------------- Minimal Styles (spinner & modal) ------------------
   const style = document.createElement("style");
   style.textContent = `
     .is-loading { position: relative; pointer-events: none; opacity:.7; }
@@ -533,6 +735,11 @@
     }
     @keyframes spin { to { transform: rotate(360deg); } }
     .danger-step { border: 2px solid #fa5252; background-color: #fff5f5; }
+    .status-overlay{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;background:rgba(0,0,0,.35)}
+    .status-overlay.hidden{display:none}
+    .status-card{background:rgba(43,48,59,.95);border:1px solid rgba(143,188,187,.4);padding:12px 16px;border-radius:10px;display:flex;gap:10px;align-items:center}
+    .status-card .spinner{width:16px;height:16px;border:3px solid rgba(255,255,255,.3);border-top-color:#fff;border-radius:50%;animation:spin 1s linear infinite}
+    .modal{position:fixed;inset:0;background:rgba(0,0,0,.55);display:none;align-items:center;justify-content:center;z-index:9999}
   `;
   document.head.appendChild(style);
 })();

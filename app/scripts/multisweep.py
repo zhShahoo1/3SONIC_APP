@@ -1,22 +1,37 @@
 # app/scripts/multisweep.py
 from __future__ import annotations
 
+"""
+3SONIC — MultiSweep merge
+-------------------------
+Merges the two most recent VALID scan folders (older = left, newer = right)
+into a single DICOM series by horizontally stitching with overlap blending.
+
+Key improvements:
+- Robust config.txt parsing by KEY (no fragile row indices).
+- Dynamic image size (no 1024×1024 assumption).
+- Clears existing DICOMs in the destination folder to avoid mixed sizes.
+- Fresh SeriesInstanceUID for the merged volume.
+"""
+
 import sys
-import glob
+import re
 from pathlib import Path
+from typing import List, Tuple
+
 import numpy as np
-import pandas as pd
 import pydicom
+import pydicom.uid
 import shutil as sh
 from tqdm import tqdm
 from skimage.io import imread
 from skimage.color import rgb2gray
 
-# ------------------------------------------------------------------------------
-# Import handling: support both
+# --------------------------------------------------------------------------
+# Import handling: supports
 #   1) python -m app.scripts.multisweep
 #   2) python app/scripts/multisweep.py
-# ------------------------------------------------------------------------------
+# --------------------------------------------------------------------------
 if __package__ in (None, ""):
     THIS_FILE = Path(__file__).resolve()
     PROJECT_ROOT = THIS_FILE.parents[2]  # .../<project-root>
@@ -31,41 +46,79 @@ else:
     from .postprocessing import make_popup_figure
 
 
-# ------------------------------------------------------------------------------
-# Helpers
-# ------------------------------------------------------------------------------
+# --------------------------------------------------------------------------
+# Robust config.txt parsing (key: value; per line)
+# --------------------------------------------------------------------------
+def _read_config_map(scan_dir: Path) -> dict[str, str]:
+    """
+    Parse config.txt into {key -> value} by splitting on the first colon
+    and trimming the trailing ';'. Tolerates extra keys and arbitrary order.
+    """
+    cfg: dict[str, str] = {}
+    p = scan_dir / "config.txt"
+    if not p.exists():
+        return cfg
+    for raw in p.read_text(encoding="utf-8").splitlines():
+        line = raw.strip()
+        if not line or ":" not in line:
+            continue
+        k, rest = line.split(":", 1)
+        cfg[k.strip()] = rest.strip().rstrip(";")
+    return cfg
 
-def _is_valid_scan_dir(p: Path) -> bool:
-    """A scan dir must have config.txt and frames/ with at least one PNG."""
+
+def _get_float(cfg: dict[str, str], key: str, default: float | None = None) -> float:
+    v = cfg.get(key, "")
     try:
-        if not p.is_dir():
-            return False
-        if not (p / "config.txt").exists():
-            return False
-        frames_dir = p / "frames"
-        if not frames_dir.is_dir():
-            return False
-        if not any(frames_dir.glob("*.png")):
-            return False
-        return True
+        return float(v)
+    except Exception:
+        if default is not None:
+            return float(default)
+        raise ValueError(f"Bad float for '{key}': {v!r}")
+
+
+def _extract_y_from_positions(cfg: dict[str, str]) -> float:
+    """
+    Parse Y from the 'POSTIONS ' (note trailing space) line, e.g.:
+      'X:40.00 Y:63.50 Z:10.00 E:0.00 Count ...'
+    Falls back to key without trailing space if needed.
+    """
+    raw = cfg.get("POSTIONS ", None)
+    if raw is None:
+        raw = cfg.get("POSTIONS", "")
+    m = re.search(r"\bY:([+-]?\d+(?:\.\d+)?)\b", raw)
+    if not m:
+        raise ValueError(f"Could not extract Y from POSTIONS line: {raw!r}")
+    return float(m.group(1))
+
+
+# --------------------------------------------------------------------------
+# Scan folder discovery helpers
+# --------------------------------------------------------------------------
+def _is_valid_scan_dir(p: Path) -> bool:
+    try:
+        return (
+            p.is_dir()
+            and (p / "config.txt").exists()
+            and (p / "frames").is_dir()
+            and any((p / "frames").glob("*.png"))
+        )
     except Exception:
         return False
 
 
 def _list_recent_scan_dirs(root: Path, limit: int = 10) -> list[Path]:
-    """Return up to `limit` most recent valid scan folders (newest first)."""
     scans = [d for d in root.iterdir() if _is_valid_scan_dir(d)]
 
-    def _sort_key(p: Path):
-        # Prefer timestamp-like folder names; fall back to mtime
-        return (p.name, p.stat().st_mtime)
+    def _sort_key(x: Path):
+        # Folder names are timestamps → lexicographic works; mtime as tie-breaker
+        return (x.name, x.stat().st_mtime)
 
     scans.sort(key=_sort_key, reverse=True)
     return scans[:limit]
 
 
 def _frames_sorted_by_index(frames_dir: Path) -> list[str]:
-    """Return frames/*.png sorted by numeric stem; fall back to name."""
     paths = list(frames_dir.glob("*.png"))
     if not paths:
         return []
@@ -76,14 +129,14 @@ def _frames_sorted_by_index(frames_dir: Path) -> list[str]:
     return [str(p) for p in paths]
 
 
-# ------------------------------------------------------------------------------
-# Core flow
-# ------------------------------------------------------------------------------
-
-def extract_parameters() -> tuple[list[str], list[str], list[float], Path, Path, float, float]:
+# --------------------------------------------------------------------------
+# Core flow (key-based parsing + safe DICOM writing)
+# --------------------------------------------------------------------------
+def extract_parameters() -> tuple[List[str], List[str], List[float], Path, Path, float, float]:
     """
-    Read recdir → take parent → pick the two most recent VALID scan dirs
-    (ignoring 'logs' or any non-scan folders) → return their frames, scales, Y positions.
+    Read recdir → parent → pick the two most recent VALID scan dirs → return:
+      frames1, frames2, [x_res, y_res, e_r], processdir1(older), processdir2(newer),
+      ypos1, ypos2
     """
     try:
         processdir = Path(Config.RECDIR_FILE.read_text().strip())
@@ -99,7 +152,7 @@ def extract_parameters() -> tuple[list[str], list[str], list[float], Path, Path,
         print("  found:", [c.name for c in candidates])
         sys.exit(1)
 
-    # newest two (dir2 = newest, dir1 = previous)
+    # newest first → (dir2 = newest, dir1 = previous/older)
     processdir2, processdir1 = candidates[0], candidates[1]
     print("[multisweep] merging:")
     print(" dir1:", processdir1)
@@ -111,27 +164,21 @@ def extract_parameters() -> tuple[list[str], list[str], list[float], Path, Path,
         print("[multisweep] one of the scan folders has no frames")
         sys.exit(1)
 
-    # read configs
-    try:
-        config1 = pd.read_csv(processdir1 / "config.txt", header=None)
-        config2 = pd.read_csv(processdir2 / "config.txt", header=None)
-    except Exception as e:
-        print(f"[multisweep] failed reading config.txt: {e}")
-        sys.exit(1)
+    # Parse configs by key
+    cfg1 = _read_config_map(processdir1)
+    cfg2 = _read_config_map(processdir2)
 
-    # scales (match your original indices)
     try:
-        y_res = float(config1.iloc[:, 0][13].split(":")[1][:-1])
-        x_res = float(config1.iloc[:, 0][12].split(":")[1][:-1])
-        e_r   = float(config1.iloc[:, 0][2].split(":")[1][:-1])
+        x_res = _get_float(cfg1, "Xres")
+        y_res = _get_float(cfg1, "Yres")
+        e_r   = _get_float(cfg1, "e_r setpoint")
     except Exception as e:
         print(f"[multisweep] failed parsing scales from config1: {e}")
         sys.exit(1)
 
-    # Y positions (used for overlap)
     try:
-        ypos1 = float(config1.iloc[9, 0].split()[2][2:])
-        ypos2 = float(config2.iloc[9, 0].split()[2][2:])
+        ypos1 = _extract_y_from_positions(cfg1)
+        ypos2 = _extract_y_from_positions(cfg2)
     except Exception as e:
         print(f"[multisweep] failed parsing Y positions: {e}")
         sys.exit(1)
@@ -139,70 +186,130 @@ def extract_parameters() -> tuple[list[str], list[str], list[float], Path, Path,
     return frames1, frames2, [x_res, y_res, e_r], processdir1, processdir2, ypos1, ypos2
 
 
+def _load_frame_png(path: str) -> np.ndarray:
+    """Load a PNG frame and return grayscale float32 in [0,1]."""
+    img = imread(path)
+    if img.ndim == 3:
+        img = rgb2gray(img)
+    return img.astype(np.float32)
+
+
 def dicom_write_volume_multi_sweep(
-    frames1: list[str], frames2: list[str], scales: list[float],
-    dst: Path, filetype: str, diff_y: float
+    frames1: List[str],
+    frames2: List[str],
+    scales: List[float],
+    dst: Path,
+    filetype: str,
+    diff_y: float,
 ) -> None:
     """
     Merge two sweeps by overlap blending and save as DICOM slices.
     frames1 -> left part, frames2 -> right part (newest on the right).
+    Image size is determined from the first frame (no hardcoded 1024).
     """
-    x_res, y_res, e_r = scales
-    dicom_file = pydicom.dcmread(str(Config.dicom_template_path()))
+    x_res, y_res, e_r = [float(v) for v in scales]
+    template = pydicom.dcmread(str(Config.dicom_template_path()))
 
-    num_pix = max(0, int(diff_y / max(y_res, 1e-9)))
-    overlap = max(0, 1024 - num_pix)
-    idx1 = num_pix
-    idx2 = 1024
+    # Determine input frame size from the first frame
+    if filetype == "raw":
+        arr0 = np.flip(np.load(frames1[0]), axis=0).astype(np.float32)
+        h, w = arr0.shape
+    else:
+        arr0 = _load_frame_png(frames1[0])
+        h, w = arr0.shape
 
-    print("[multisweep] writing merged dicom volume...")
+    # number of added columns (shift in pixels converted from mm)
+    num_pix = max(0, int(round(diff_y / max(y_res, 1e-9))))
+    out_w = w + num_pix
+    overlap = max(0, w - num_pix)  # region that blends left/right
+    idx1 = num_pix                 # start of the overlapped region from the left
+    idx2 = w                       # start of the right block in the output
+
+    print(f"[multisweep] writing merged dicom volume... (H={h}, W={out_w}, shift={num_pix}px)")
+    series_uid = pydicom.uid.generate_uid()
+    series_desc = "3SONIC MultiSweep (merged)"
+
     n = min(len(frames1), len(frames2))
     for idx in tqdm(range(n)):
+        # Load both frames
         if filetype == "raw":
-            arr1 = np.flip(np.load(frames1[idx]), axis=0)
-            arr2 = np.flip(np.load(frames2[idx]), axis=0)
-        elif filetype == "png":
-            arr1 = rgb2gray(imread(frames1[idx]))
-            arr2 = rgb2gray(imread(frames2[idx]))
+            left  = np.flip(np.load(frames1[idx]), axis=0).astype(np.float32)
+            right = np.flip(np.load(frames2[idx]), axis=0).astype(np.float32)
         else:
-            continue
+            left  = _load_frame_png(frames1[idx])
+            right = _load_frame_png(frames2[idx])
 
-        # allocate destination (wider by num_pix)
-        arr = np.zeros((1024, 1024 + num_pix), dtype=float)
-        arr[:, :idx1] = arr1[:, :idx1]
-        arr[:, idx2:] = arr2[:, 1024 - num_pix:]
+        # Validate sizes
+        if left.shape != (h, w):
+            h, w = left.shape
+            out_w = w + num_pix
+            overlap = max(0, w - num_pix)
+            idx2 = w
+        if right.shape != (h, w):
+            # Resize right via simple crop/pad to match (best-effort)
+            rr = np.zeros((h, w), dtype=np.float32)
+            hh = min(h, right.shape[0])
+            ww = min(w, right.shape[1])
+            rr[:hh, :ww] = right[:hh, :ww]
+            right = rr
 
-        # smooth overlap blending
+        # Allocate destination
+        arr = np.zeros((h, out_w), dtype=np.float32)
+
+        # Left part up to the shift
+        if idx1 > 0:
+            arr[:, :idx1] = left[:, :idx1]
+
+        # Right tail after the original width boundary
+        if num_pix > 0:
+            arr[:, idx2:] = right[:, w - num_pix:]
+
+        # Smooth overlap blending across 'overlap' columns
         if overlap > 0:
-            weights = np.linspace(0, 1, num=overlap, endpoint=True)
+            weights = np.linspace(0.0, 1.0, num=overlap, endpoint=True, dtype=np.float32)
             for i in range(overlap):
-                # handle zero columns gracefully
-                if np.sum(arr1[:, idx1 + i]) == 0.0:
-                    w = 1.0
-                elif np.sum(arr2[:, i]) == 0.0:
-                    w = 0.0
+                a = left[:, idx1 + i]   # column from left frame
+                b = right[:, i]         # corresponding column from right frame
+                if float(np.sum(a)) == 0.0:
+                    wgt = 1.0
+                elif float(np.sum(b)) == 0.0:
+                    wgt = 0.0
                 else:
-                    w = weights[i]
-                arr[:, idx1 + i] = (1 - w) * arr1[:, idx1 + i] + w * arr2[:, i]
+                    wgt = float(weights[i])
+                arr[:, idx1 + i] = (1.0 - wgt) * a + wgt * b
 
-        # add scalebar
+        # scale bar and 16-bit
         mask = get_mask(arr, (x_res, y_res))
         arr = draw_scale_bar(arr, mask, 1.0)
-        arr = np.uint16(256 * arr)
+        arr16 = np.uint16(np.clip(arr * 256.0, 0, 65535))
 
-        dicom_file.Rows, dicom_file.Columns = arr.shape
-        dicom_file.PixelData = arr.tobytes()
-        dicom_file.ImagePositionPatient = [0, 0, idx * e_r]
+        # Prepare a per-slice DICOM object
+        dcm = template.copy()
+        dcm.Rows = int(h)
+        dcm.Columns = int(out_w)
+        dcm.SamplesPerPixel = 1
+        dcm.PhotometricInterpretation = "MONOCHROME2"
+        dcm.BitsStored = 16
+        dcm.BitsAllocated = 16
+        dcm.HighBit = 15
+        dcm.PixelRepresentation = 0
+        dcm.PixelSpacing = [float(x_res), float(y_res)]
+        # Keep if present in template; avoid adding invalid tag types otherwise
+        if hasattr(dcm, "ImagerPixelSpacing"):
+            dcm.ImagerPixelSpacing = [float(x_res), float(y_res)]
+        dcm.SliceThickness = float(e_r)
+        dcm.SeriesInstanceUID = series_uid
+        dcm.SeriesDescription = series_desc
+        dcm.ImagePositionPatient = [0.0, 0.0, idx * float(e_r)]
+        dcm.PixelData = arr16.tobytes()
 
-        try:
-            dicom_file.save_as(str(dst / f"slice{idx}.dcm"))
-        except OSError as e:
-            print(f"[multisweep] error saving slice {idx}: {e}")
+        dcm.save_as(str(dst / f"slice{idx:04d}.dcm"))
 
 
 def clean_up(processdir1: Path, processdir2: Path) -> None:
     """
     Move frames/raws/config of dir2 into dir1, then remove dir2.
+    Same logic as your original (best-effort).
     """
     print("[multisweep] cleanup...")
     try:
@@ -223,11 +330,20 @@ def main(argv: list[str]) -> int:
     dicom_dst = processdir1 / "dicom_series"
     dicom_dst.mkdir(exist_ok=True)
 
-    # Place the newer sweep (frames2) on the right-hand side.
+    # IMPORTANT: remove any previous DICOMs to avoid mixed sizes in the series
+    for f in dicom_dst.glob("*.dcm"):
+        try:
+            f.unlink()
+        except Exception:
+            pass
+
+    # newer sweep (frames2) on the right-hand side
     diff_y = float(abs(ypos1 - ypos2))
     dicom_write_volume_multi_sweep(frames1, frames2, scales, dicom_dst, "png", diff_y)
 
+    # Popup on the merged (and now clean) dicom_series
     make_popup_figure(processdir1)
+
     clean_up(processdir1, processdir2)
     return 0
 

@@ -59,6 +59,21 @@ def resource_path(relative: str) -> Path:
     return (Path(__file__).resolve().parent.parent / relative).resolve()
 
 
+def _env_bool(name: str, default: bool) -> bool:
+    v = os.environ.get(name)
+    if v is None:
+        return default
+    v = v.strip().lower()
+    return v in ("1", "true", "yes", "y", "on")
+
+
+def _env_float(name: str, default: float) -> float:
+    try:
+        return float(os.environ.get(name, default))
+    except Exception:
+        return float(default)
+
+
 # ================================ Serial =================================
 
 @dataclass(frozen=True)
@@ -81,7 +96,6 @@ class Config:
     """
 
     # ---------------- Paths (dev & EXE friendly) ----------------
-    # Allow an explicit override via env if desired
     _ENV_BASE = os.environ.get("APP_BASE_DIR")
     BASE_DIR: Path = Path(_ENV_BASE).resolve() if _ENV_BASE else _candidate_base_dirs()[0]
 
@@ -105,8 +119,11 @@ class Config:
     )
 
     # Orientation for LIVE ultrasound stream (does not affect saved data)
-    ULTRA_VFLIP = True  # flip vertically (Y)
-    ULTRA_HFLIP = False   # flip horizontally (X)
+    # Back-compat: keep ULTRA_VFLIP / ULTRA_HFLIP and mirror to *_LIVE.
+    ULTRA_VFLIP: bool = _env_bool("ULTRA_VFLIP", True)
+    ULTRA_HFLIP: bool = _env_bool("ULTRA_HFLIP", False)
+    ULTRA_VFLIP_LIVE: bool = _env_bool("ULTRA_VFLIP_LIVE", ULTRA_VFLIP)
+    ULTRA_HFLIP_LIVE: bool = _env_bool("ULTRA_HFLIP_LIVE", ULTRA_HFLIP)
 
     # Writable output (kept under STATIC/data). We create these (not STATIC_DIR itself).
     DATA_DIR: Path = (STATIC_DIR / "data").resolve()
@@ -118,6 +135,7 @@ class Config:
     SCANNING_FLAG_FILE: Path = (BASE_DIR / "scanning").resolve()
     MULTISWEEP_FLAG_FILE: Path = (BASE_DIR / "multisweep").resolve()
     RECDIR_FILE: Path = (BASE_DIR / "recdir").resolve()
+    SCANPLAN_FILE: Path = (BASE_DIR / "scanplan.json").resolve()
 
     # Python interpreter to spawn helper scripts (record/imconv/etc.)
     PYTHON_EXE: str = os.environ.get("PYTHON_EXE", sys.executable)
@@ -126,51 +144,67 @@ class Config:
     SECRET_KEY: str = os.environ.get("SECRET_KEY", "dev-key-change-in-production")
 
     # ---------------- Scanner / Geometry ----------------
-    X_MAX: float = float(os.environ.get("X_MAX", 118))
-    Y_MAX: float = float(os.environ.get("Y_MAX", 118))
-    Z_MAX: float = float(os.environ.get("Z_MAX", 160))
+    X_MAX: float = _env_float("X_MAX", 118.0)
+    Y_MAX: float = _env_float("Y_MAX", 118.0)
+    Z_MAX: float = _env_float("Z_MAX", 160.0)
 
     # Offsets to align probe vs nozzle (mm)
-    OFFSET_X: float = float(os.environ.get("OFFSET_X", -5.5))
-    OFFSET_Y: float = float(os.environ.get("OFFSET_Y", -5.5))
-    OFFSET_Z: float = float(os.environ.get("OFFSET_Z", -70.0))
+    OFFSET_X: float = _env_float("OFFSET_X", -5.5)
+    OFFSET_Y: float = _env_float("OFFSET_Y", -5.5)
+    OFFSET_Z: float = _env_float("OFFSET_Z", -70.0)
+
+    # ---- Scan-path presets (mm) ----
+    # Env overrides (optional):
+    #   SCAN_LONG_START_X / SCAN_LONG_END_X
+    #   SCAN_SHORT_START_X / SCAN_SHORT_END_X
+    LONG_PATH_X: tuple[float, float] = (
+        _env_float("SCAN_LONG_START_X", 0.0),
+        _env_float("SCAN_LONG_END_X", X_MAX),
+    )
+    SHORT_PATH_X: tuple[float, float] = (
+        _env_float("SCAN_SHORT_START_X", 15.0),
+        _env_float("SCAN_SHORT_END_X", 90.0),
+    )
 
     # ---------------- Feedrates / speeds ----------------
-    SCAN_SPEED_MM_PER_MIN: float = float(os.environ.get("SCAN_SPEED", 90))
-    FAST_FEED_MM_PER_MIN: float = float(os.environ.get("FAST_FEED", 20 * 60))  # 1200 mm/min
-    JOG_FEED_MM_PER_MIN: float = float(os.environ.get("JOG_FEED", 2400))       # ~40 mm/s
+    SCAN_SPEED_MM_PER_MIN: float = _env_float("SCAN_SPEED", 90.0)     # used if SCAN_FEED_FROM_ER_FPS=False
+    FAST_FEED_MM_PER_MIN: float = _env_float("FAST_FEED", 20.0 * 60)  # 1200 mm/min
+    JOG_FEED_MM_PER_MIN: float = _env_float("JOG_FEED", 2400.0)       # ~40 mm/s
+
+    # Compute scan feed from e_r and FPS for motion–ultrasound sync
+    SCAN_FEED_FROM_ER_FPS: bool = _env_bool("SCAN_FEED_FROM_ER_FPS", True)
 
     # ---------------- Ultrasound / Live & Recording ----------------
     # Live preview size (also used as recording size unless RECORD_* set)
-    ULTRA_W: int = int(os.environ.get("ULTRASOUND_WIDTH", 1024))
-    ULTRA_H: int = int(os.environ.get("ULTRASOUND_HEIGHT", 1024))
+    ULTRA_W: int = int(_env_float("ULTRASOUND_WIDTH", 1024))
+    ULTRA_H: int = int(_env_float("ULTRASOUND_HEIGHT", 1024))
 
     # If you want recording to use a different size than live, set these; else ULTRA_* are used
-    RECORD_W: int = int(os.environ.get("RECORD_WIDTH", 0)) or ULTRA_W
-    RECORD_H: int = int(os.environ.get("RECORD_HEIGHT", 0)) or ULTRA_H
+    RECORD_W: int = int(_env_float("RECORD_WIDTH", 0)) or ULTRA_W
+    RECORD_H: int = int(_env_float("RECORD_HEIGHT", 0)) or ULTRA_H
 
-    # Record-time parameters (match original logic/units)
-    TRAVEL_SPEED_X_MM_PER_S: float = float(os.environ.get("TRAVEL_SPEED_X", 0.5))  # mm/s
-    ELEV_RESOLUTION_MM: float = float(os.environ.get("ELEV_RESOLUTION", 0.06))     # mm
-    DX_MM: float = float(os.environ.get("DX_MM", 118))                              # mm span on X
-    TARGET_FPS: float = float(os.environ.get("TARGET_FPS", 25))                     # Hz
+    # Record-time parameters
+    TRAVEL_SPEED_X_MM_PER_S: float = _env_float("TRAVEL_SPEED_X", 0.5)  # legacy; recorder derives v = e_r * fps
+    ELEV_RESOLUTION_MM: float = _env_float("ELEV_RESOLUTION", 0.06)     # e_r (mm)
+    DX_MM: float = _env_float("DX_MM", 118.0)                            # default span if not overridden
+    TARGET_FPS: float = _env_float("TARGET_FPS", 25.0)                   # Hz
 
-    # Ultrasound SDK auto-reinit policy (used by ultrasound_sdk if you enable it)
-    US_REINIT_PING_MS: int = int(os.environ.get("US_REINIT_PING_MS", 1500))
-    US_REINIT_BACKOFF_MS_START: int = int(os.environ.get("US_REINIT_BACKOFF_MS_START", 500))
-    US_REINIT_BACKOFF_MS_MAX: int = int(os.environ.get("US_REINIT_BACKOFF_MS_MAX", 5000))
-    US_REINIT_MAX_FAILURES: int = int(os.environ.get("US_REINIT_MAX_FAILURES", 10))
+    # Ultrasound SDK auto-reinit policy
+    US_REINIT_PING_MS: int = int(_env_float("US_REINIT_PING_MS", 1500))
+    US_REINIT_BACKOFF_MS_START: int = int(_env_float("US_REINIT_BACKOFF_MS_START", 500))
+    US_REINIT_BACKOFF_MS_MAX: int = int(_env_float("US_REINIT_BACKOFF_MS_MAX", 5000))
+    US_REINIT_MAX_FAILURES: int = int(_env_float("US_REINIT_MAX_FAILURES", 10))
 
     # ---------------- Serial / Printer ----------------
-    SERIAL_BAUD: int = int(os.environ.get("SERIAL_BAUD", 115200))
-    SERIAL_TIMEOUT_S: float = float(os.environ.get("SERIAL_TIMEOUT", 1.0))
+    SERIAL_BAUD: int = int(_env_float("SERIAL_BAUD", 115200))
+    SERIAL_TIMEOUT_S: float = _env_float("SERIAL_TIMEOUT", 1.0)
     SERIAL_PROFILE: SerialProfile = SerialProfile()
     SERIAL_PORT: str | None = os.environ.get("SERIAL_PORT") or None
 
     # Background manager timing
-    SERIAL_RECONNECT_PERIOD_S: float = float(os.environ.get("SERIAL_RECONNECT_PERIOD", 3.0))
-    SERIAL_RESPONSE_SETTLE_S: float = float(os.environ.get("SERIAL_RESPONSE_SETTLE", 0.05))
-    SERIAL_READ_WINDOW_S: float = float(os.environ.get("SERIAL_READ_WINDOW", 0.5))
+    SERIAL_RECONNECT_PERIOD_S: float = _env_float("SERIAL_RECONNECT_PERIOD", 3.0)
+    SERIAL_RESPONSE_SETTLE_S: float = _env_float("SERIAL_RESPONSE_SETTLE", 0.05)
+    SERIAL_READ_WINDOW_S: float = _env_float("SERIAL_READ_WINDOW", 0.5)
 
     # ---------------- DLL / Ultrasound SDK ----------------
     US_DLL_NAME: str = os.environ.get("US_DLL_NAME", "usgfw2wrapper.dll")
@@ -179,41 +213,41 @@ class Config:
     # ---------------- DICOM defaults ----------------
     PATIENT_ID: str = os.environ.get("PATIENT_ID", "3SONIC001")
     STUDY_DESC: str = os.environ.get("STUDY_DESC", "Ultrasound Volume")
-    WINDOW_CENTER: int = int(os.environ.get("DICOM_WINDOW_CENTER", 0))
-    WINDOW_WIDTH: int = int(os.environ.get("DICOM_WINDOW_WIDTH", 1000))
-    BITS_ALLOCATED: int = int(os.environ.get("DICOM_BITS_ALLOCATED", 16))
-    BITS_STORED: int = int(os.environ.get("DICOM_BITS_STORED", 16))
-    HIGH_BIT: int = int(os.environ.get("DICOM_HIGH_BIT", 15))
+    WINDOW_CENTER: int = int(_env_float("DICOM_WINDOW_CENTER", 0))
+    WINDOW_WIDTH: int = int(_env_float("DICOM_WINDOW_WIDTH", 1000))
+    BITS_ALLOCATED: int = int(_env_float("DICOM_BITS_ALLOCATED", 16))
+    BITS_STORED: int = int(_env_float("DICOM_BITS_STORED", 16))
+    HIGH_BIT: int = int(_env_float("DICOM_HIGH_BIT", 15))
     PHOTOMETRIC: str = os.environ.get("DICOM_PHOTOMETRIC", "MONOCHROME2")
-    RESCALE_INTERCEPT: int = int(os.environ.get("DICOM_RS_INTERCEPT", -1024))
-    RESCALE_SLOPE: int = int(os.environ.get("DICOM_RS_SLOPE", 1))
+    RESCALE_INTERCEPT: int = int(_env_float("DICOM_RS_INTERCEPT", -1024))
+    RESCALE_SLOPE: int = int(_env_float("DICOM_RS_SLOPE", 1))
     RESCALE_TYPE: str = os.environ.get("DICOM_RS_TYPE", "HU")
 
     # ---------------- UI / Timings ----------------
-    DELAY_BEFORE_RECORD_S: float = float(os.environ.get("DELAY_BEFORE_RECORD", 9.0))
+    DELAY_BEFORE_RECORD_S: float = _env_float("DELAY_BEFORE_RECORD", 9.0)
 
     # Frontend stream reload hints (used by JS; not injected automatically)
-    FRONTEND_US_RELOAD_MIN_MS: int = int(os.environ.get("FRONTEND_US_RELOAD_MIN_MS", 1500))
-    FRONTEND_US_RELOAD_PERIOD_MS: int = int(os.environ.get("FRONTEND_US_RELOAD_PERIOD_MS", 60000))
+    FRONTEND_US_RELOAD_MIN_MS: int = int(_env_float("FRONTEND_US_RELOAD_MIN_MS", 1500))
+    FRONTEND_US_RELOAD_PERIOD_MS: int = int(_env_float("FRONTEND_US_RELOAD_PERIOD_MS", 60000))
 
     # Desktop window title (pywebview)
     UI_TITLE: str = os.environ.get("UI_TITLE", "3SONIC 3D Ultrasound app")
 
     # Exit timing (used by graceful shutdown to let HTTP 200 flush)
-    EXIT_GRACE_DELAY_MS: int = int(os.environ.get("EXIT_GRACE_DELAY_MS", 300))
+    EXIT_GRACE_DELAY_MS: int = int(_env_float("EXIT_GRACE_DELAY_MS", 300))
 
     # ---------------- Service / scan positioning (Insert-Bath button) --------
-    TARGET_Z_MM: float = float(os.environ.get("TARGET_Z_MM", 100.0))
+    TARGET_Z_MM: float = _env_float("TARGET_Z_MM", 100.0)
     SCAN_POSE: dict[str, float] = {
-        "X": float(os.environ.get("SCAN_POSE_X", 53.5)),
-        "Y": float(os.environ.get("SCAN_POSE_Y", 53.5)),
-        "Z": float(os.environ.get("SCAN_POSE_Z", 10.0)),
+        "X": _env_float("SCAN_POSE_X", 53.5),
+        "Y": _env_float("SCAN_POSE_Y", 53.5),
+        "Z": _env_float("SCAN_POSE_Z", 10.0),
     }
-    Z_FEED_MM_PER_MIN: int = int(os.environ.get("Z_FEED", 1500))
-    XYZ_FEED_MM_PER_MIN: int = int(os.environ.get("XYZ_FEED", 2000))
-    POS_TOL_MM: float = float(os.environ.get("POS_TOL_MM", 0.02))
-    POLL_INTERVAL_S: float = float(os.environ.get("POLL_INTERVAL_S", 0.10))
-    POLL_TIMEOUT_S: float = float(os.environ.get("POLL_TIMEOUT_S", 5.0))
+    Z_FEED_MM_PER_MIN: int = int(_env_float("Z_FEED", 1500))
+    XYZ_FEED_MM_PER_MIN: int = int(_env_float("XYZ_FEED", 2000))
+    POS_TOL_MM: float = _env_float("POS_TOL_MM", 0.02)
+    POLL_INTERVAL_S: float = _env_float("POLL_INTERVAL_S", 0.10)
+    POLL_TIMEOUT_S: float = _env_float("POLL_TIMEOUT_S", 5.0)
 
     # ---------------- Helpers ----------------
     @staticmethod
@@ -239,3 +273,44 @@ class Config:
     def dicom_template_path() -> Path:
         """Resolve path to the DICOM template file (dcmimage.dcm)."""
         return resource_path(Config.DICOM_TEMPLATE_NAME)
+
+    # -------- Scan-path & feed helpers (used by scanner_control/record) ------
+    @staticmethod
+    def clamp_x(x: float) -> float:
+        return max(0.0, min(float(Config.X_MAX), float(x)))
+
+    @staticmethod
+    def normalize_x_range(start: float, end: float) -> tuple[float, float]:
+        """Clamp to [0, X_MAX] and ensure start < end."""
+        s = Config.clamp_x(start)
+        e = Config.clamp_x(end)
+        if e <= s:
+            # minimal nonzero span if inverted/equal
+            e = min(Config.X_MAX, s + 0.1)
+        return (s, e)
+
+    @staticmethod
+    def x_range_for_mode(mode: str) -> tuple[float, float]:
+        """
+        Convenience for UI presets.
+        mode ∈ {'long','short'} → returns clamped (start,end).
+        Unknown mode → full range (0, X_MAX).
+        """
+        m = (mode or "").strip().lower()
+        if m == "short":
+            s, e = Config.SHORT_PATH_X
+        elif m == "long":
+            s, e = Config.LONG_PATH_X
+        else:
+            s, e = (0.0, float(Config.X_MAX))
+        return Config.normalize_x_range(s, e)
+
+    @staticmethod
+    def computed_scan_feed_mm_per_min() -> float:
+        """
+        Compute synchronized scan feed from e_r and frame rate:
+            v (mm/s) = e_r * fps
+            F (mm/min) = 60 * v
+        """
+        v = float(Config.ELEV_RESOLUTION_MM) * float(Config.TARGET_FPS)  # mm/s
+        return 60.0 * v
