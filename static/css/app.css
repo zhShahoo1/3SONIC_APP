@@ -57,6 +57,9 @@ body { margin: 0; }
   --header-h: 56px;       /* adjust if your header height changes */
   --footer-h: 32px;       /* adjust if your footer height changes */
   --view-padding: 24px;   /* padding around image in the viewer */
+
+  /* Hint browsers to use dark UI for native controls */
+  color-scheme: dark;
 }
 
 /* ----------------------------- Base -------------------------------------- */
@@ -292,7 +295,7 @@ footer p{ color: var(--text-dim); margin: 0; }
 .z-btn{ height: 42px; font-size: .86rem; }
 .rotation-row{ display: flex; gap: .5rem; justify-content: center; }
 
-/* Inputs */
+/* ----------------------- Inputs (numbers + selects) ---------------------- */
 input[type="number"], select{
   background: linear-gradient(to bottom, var(--deep-fjord), var(--arctic-dawn));
   color: var(--text);
@@ -308,8 +311,58 @@ input[type="number"]:focus, select:focus{
   box-shadow: var(--focus);
 }
 
-/* Safety cue for big step sizes (toggled via JS) */
-.danger-step{ border: 2px solid #fa5252; background:rgba(46,52,64,.9); }
+/* --- Dark dropdown popup + custom arrow for the distance select --- */
+.distance-select{
+  -webkit-appearance: none;
+  -moz-appearance: none;
+  appearance: none;
+  padding-right: 2rem; /* space for the arrow */
+  background-image:
+    linear-gradient(to bottom, var(--deep-fjord), var(--arctic-dawn)),
+    url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='14' height='14' viewBox='0 0 24 24' fill='white'><path d='M7 10l5 5 5-5z'/></svg>");
+  background-repeat: no-repeat, no-repeat;
+  background-position: 0 0, right .65rem center;
+  background-size: auto, 14px;
+}
+
+/* ensure popup list uses dark colors where supported */
+.distance-select,
+.distance-select option,
+.distance-select optgroup{
+  background-color: var(--deep-fjord) !important;
+  color: var(--text) !important;
+}
+
+/* group label styling */
+.distance-select optgroup{
+  color: var(--nordic-frost) !important;
+  font-weight: 500;
+}
+
+/* selected/hovered option (support varies by engine) */
+.distance-select option:checked,
+.distance-select option:hover{
+  background-color: var(--snow-shadow) !important;
+  color: var(--text) !important;
+}
+
+/* Safety cue: keep dark fill, just add warning border/glow */
+.distance-select.danger-step{
+  border-color: #fa5252 !important;
+  box-shadow: 0 0 0 2px rgba(250,82,82,.35);
+  /* keep same dark background + arrow when "danger" is active */
+  background-image:
+    linear-gradient(to bottom, var(--deep-fjord), var(--arctic-dawn)),
+    url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='14' height='14' viewBox='0 0 24 24' fill='white'><path d='M7 10l5 5 5-5z'/></svg>") !important;
+  background-repeat: no-repeat, no-repeat !important;
+  background-position: 0 0, right .65rem center !important;
+  background-size: auto, 14px !important;
+}
+
+/* Generic "danger" utility (no background override to avoid white boxes) */
+.danger-step{
+  border: 2px solid #fa5252;
+}
 
 /* ----------------------------- Modal ------------------------------------- */
 .modal{
