@@ -221,37 +221,64 @@ def main(argv: list[str]) -> int:
     p_array = (c_uint32 * w * h * 4)()
     t_list: list[float] = []
 
-    # ── acquisition loop ──────────────────────────────────────────────────────
+    # ── acquisition loop (distance-based trigger: Opzione A) ─────────────────
     frames_written = 0
+    SAVE_TOL_FRAC = 0.10
+    tol_mm = max(1e-6, SAVE_TOL_FRAC * e_r_eff)
+    x_last = scan_x0  # ultimo multiplo salvato
+    i = 0
     try:
-        for i in range(n_samples):
+        while True:
             if _should_stop():
                 print("[record] stop requested — breaking")
                 break
 
-            loop_start = time.time()
+            # posizione corrente (mm) — best effort
+            try:
+                x_cur = float(pssc.get_position_axis("X"))
+            except Exception:
+               # se non leggiamo la posizione, non possiamo fare trigger spaziale
+                # esci per sicurezza per non salvare frame "a tempo"
+                print("[record] ⚠ no position feedback — aborting distance-based record")
+                break
 
-            usgfw2.return_pixel_values(pointer(p_array))  # Grab pixels
+            # stop: raggiunto X1 (con piccola tolleranza)
+            if (x_cur + tol_mm) >= scan_x1:
+                print("[record] reached X1 — stopping")
+                break
 
-            buf = np.frombuffer(p_array, np.uint32)
-            reshaped = np.reshape(buf, (w, h, 4))
+            # quante steps e_r abbiamo superato rispetto all'ultimo salvato?
+            delta = (x_cur - x_last)
+            if delta >= (e_r_eff - tol_mm):
+                steps = int(math.floor((delta + tol_mm) / e_r_eff))
+                for s in range(steps):
+                    x_save = x_last + (s + 1) * e_r_eff
+                    if x_save > (scan_x1 + tol_mm):
+                        break
 
-            usgfw2.get_resolution(pointer(res_X), pointer(res_Y))  # refresh res if needed
+                    loop_start = time.time()
 
-            # save first channel as uint32 .npy
-            np.save(str(measurement_dir / f"{i}"), reshaped[:, :, 0].astype(np.uint32))
-            frames_written += 1
+                    # Acquisisci pixel per QUESTO frame
+                    usgfw2.return_pixel_values(pointer(p_array))
+                    buf = np.frombuffer(p_array, np.uint32)
+                    reshaped = np.reshape(buf, (w, h, 4))
+                    usgfw2.get_resolution(pointer(res_X), pointer(res_Y))
 
-            if i % 10 == 0:
-                print(i)
+                    # Salva canale 0
+                    np.save(str(measurement_dir / f"{i}"), reshaped[:, :, 0].astype(np.uint32))
+                    frames_written += 1
+                    if i % 10 == 0:
+                        print(i, f"@ x={x_save:.3f} mm")
+                    i += 1
 
-            # pace by fps
-            elapsed_ms = (time.time() - loop_start) * 1000.0
-            sleep_ms = sample_time_ms - elapsed_ms
-            if sleep_ms > 0:
-                time.sleep(sleep_ms / 1000.0)
+                    # tempi diagnostici
+                    t_list.append((time.time() - loop_start) * 1000.0)
 
-            t_list.append((time.time() - loop_start) * 1000.0)
+                # avanza l'ultimo multiplo salvato
+                x_last += steps * e_r_eff
+
+            # piccolo riposo per non saturare la CPU/seriale
+            time.sleep(max(0.0, float(Config.POLL_INTERVAL_S)))
     finally:
         try: usgfw2.Freeze_ultrasound_scanning()
         except Exception: pass
