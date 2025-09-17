@@ -244,14 +244,49 @@
     const applyDisabled = () => {
       const m = getSelectedMode();
       const custom = m === "custom";
+    
+      // abilita/disabilita input
       x0El.toggleAttribute("disabled", !custom);
       x1El.toggleAttribute("disabled", !custom);
-      hint.textContent = m === "short"
-        ? `Will scan X=${DEFAULTS.short.x0}→${DEFAULTS.short.x1} mm`
-        : m === "long"
-          ? `Will scan X=${DEFAULTS.long.x0}→${DEFAULTS.long.x1} mm`
-          : `Set a valid range within 0–${XMAX} mm`;
+    
+      let x0, x1;
+      // aggiorna valori coerenti
+      if (m === "short") {
+        x0 = DEFAULTS.short.x0;
+        x1 = DEFAULTS.short.x1;
+        x0El.value = String(x0);
+        x1El.value = String(x1);
+        hint.textContent = `Will scan X=${x0}→${x1} mm`;
+      } else if (m === "long") {
+        x0 = DEFAULTS.long.x0;
+        x1 = DEFAULTS.long.x1;
+        x0El.value = String(x0);
+        x1El.value = String(x1);
+        hint.textContent = `Will scan X=${x0}→${x1} mm`;
+      } else {
+        x0 = x0El.value;
+        x1 = x1El.value;
+        hint.textContent = `Set a valid range within 0–${XMAX} mm`;
+      }
+    
+      // 🔴 qui aggiorni subito il riquadro di destra
+      const presetEl = document.getElementById("ui-selected-preset");
+      const rangeEl  = document.getElementById("ui-selected-range");
+      const modeLabel = (m === "long") ? "Long" : (m === "short") ? "Short" : "Custom";
+      if (presetEl) presetEl.textContent = modeLabel;
+      if (rangeEl)  rangeEl.textContent  = `X: ${x0} → ${x1} mm`;
     };
+    // aggiorna il riquadro mentre digiti in "Custom"
+[x0El, x1El].forEach(el => {
+  el.addEventListener("input", () => {
+    if (getSelectedMode() !== "custom") return;
+    const presetEl = document.getElementById("ui-selected-preset");
+    const rangeEl  = document.getElementById("ui-selected-range");
+    if (presetEl) presetEl.textContent = "Custom";
+    if (rangeEl)  rangeEl.textContent  = `X: ${x0El.value} → ${x1El.value} mm`;
+  });
+});
+
 
     function getSelectedMode() {
       const el = modeEls.find(e => e.checked);
