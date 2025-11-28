@@ -210,12 +210,22 @@ def deltaMove(delta: float, axis: str) -> bool:
         return False
 
     jog_feed = float(getattr(Config, "JOG_FEED_MM_PER_MIN", 2400))
-    # Set feed once on the planner; tolerant if firmware ignores on G91 moves
-    feedrate(jog_feed)
-
-    send_now("G91")  # relative
-    ok = send_now(f"G1 {axis}{float(delta):.3f} F{int(jog_feed)}")
-    send_now("G90")  # absolute
+    # Avoid using send_gcode here (it waits for an 'ok' and can timeout under
+    # heavy UI activity). Use fire-and-forget `send_now` to set planner feed
+    # and issue the relative move for smooth responsiveness.
+    try:
+        send_now("G91")  # relative
+        # set feed on planner (best-effort)
+        try:
+            send_now(f"G1 F{int(jog_feed)}")
+        except Exception:
+            pass
+        ok = send_now(f"G1 {axis}{float(delta):.3f} F{int(jog_feed)}")
+    finally:
+        try:
+            send_now("G90")  # restore absolute
+        except Exception:
+            pass
     return bool(ok)
 
 

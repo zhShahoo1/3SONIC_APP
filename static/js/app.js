@@ -349,7 +349,7 @@
 
   async function exitApp(btn) {
     if (!confirm("Exit the app now? This will close the scanner connection and window.")) return;
-    setBusy(btn, true);
+    setBusy(btn, true); const ROT_TICK = window.__UI_DEFAULT_TICK || 0.02;
     const originalHTML = btn.innerHTML;
     try {
       btn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Exiting...';
@@ -373,6 +373,9 @@
   const rotateCW  = debounce(async (step) => { try { await apiPostJSON(ENDPOINTS.move, { direction: "rotateClockwise", step }); } catch (e) { console.error("[rotate] CW error:", e.message); } }, 120);
   const rotateCCW = debounce(async (step) => { try { await apiPostJSON(ENDPOINTS.move, { direction: "rotateCounterclockwise", step }); } catch (e) { console.error("[rotate] CCW error:", e.message); } }, 120);
 
+  // Continuous rotation settings (used when button is held)
+  const ROT_FEED = window.__UI_DEFAULT_FEED || 250.0;
+  const ROT_TICK = window.__UI_DEFAULT_TICK || 0.01;
   // ---------------------- Insert Bath / Scan Toggle -------------------------
   function bindInsertBath() {
     const btn = $(SELECTORS.lowerPlateBtn);
@@ -412,11 +415,19 @@
 
   // --------------------------- UI Bindings ----------------------------------
   function bindButtons() {
+    // Track recent hold timestamps to suppress click after a hold
+    const _holdTs = {};
+    const HOLD_THRESHOLD_MS = 150;
+
     $$(SELECTORS.buttons).forEach((btn) => {
       const action = btn.dataset.action;
       btn.addEventListener("click", (ev) => {
         // Holding Shift will reuse last scan settings and skip the dialog
         const quick = ev.shiftKey;
+        // If this button was just used as a hold, suppress the click
+        const last = _holdTs[action] || 0;
+        if (last && (performance.now() - last) < 350) { ev.preventDefault(); return; }
+
         switch (action) {
           case "init": return initScanner(btn);
           // case "scan": return startScan(btn, { prompt: !quick });
@@ -442,6 +453,57 @@
           case "exit": return exitApp(btn);
         }
       });
+
+      // Add hold-to-rotate for rotation buttons: start continuous rotation on
+      // pointerdown/touchstart, stop on pointerup/touchend/window blur. We use
+      // the backend `/move_probe/start` and `/move_probe/stop` endpoints so
+      // behavior matches the existing hold-to-move implementation.
+      if (action === 'rot-cw' || action === 'rot-ccw') {
+        let holdActive = false;
+
+        const startContinuous = async (ev) => {
+          try {
+            ev.preventDefault();
+          } catch (_) {}
+          if (holdActive) return;
+          holdActive = true;
+          _holdTs[action] = performance.now();
+          btn.classList.add('active-moving');
+          try {
+            await apiPostJSON(ENDPOINTS.move + '/start', { action: action, speed: ROT_FEED, tick_s: ROT_TICK });
+          } catch (e) {
+            // Try the root endpoint if the concatenated one is unexpected
+            try { await apiPostJSON('/move_probe/start', { action: action, speed: ROT_FEED, tick_s: ROT_TICK }); } catch (_) { console.error('[rotate] start failed', e && e.message); }
+          }
+        };
+
+        const stopContinuous = async (ev) => {
+          if (!holdActive) return;
+          holdActive = false;
+          // leave a small timestamp so the click handler knows a hold just happened
+          _holdTs[action] = performance.now();
+          btn.classList.remove('active-moving');
+          try {
+            await apiPostJSON(ENDPOINTS.move + '/stop', { action: action });
+          } catch (e) {
+            try { await apiPostJSON('/move_probe/stop', { action: action }); } catch (_) { console.error('[rotate] stop failed', e && e.message); }
+          }
+          // Clear the hold timestamp shortly after to allow normal clicks later
+          setTimeout(() => { _holdTs[action] = 0; }, 400);
+        };
+
+        // Pointer events provide unified handling for mouse/touch; fall back to
+        // touch/mouse for older browsers. Use document-level end events to
+        // ensure stop fires even if pointer leaves the button.
+        btn.addEventListener('pointerdown', startContinuous);
+        btn.addEventListener('touchstart', startContinuous, { passive: false });
+        btn.addEventListener('mousedown', startContinuous);
+
+        document.addEventListener('pointerup', stopContinuous);
+        document.addEventListener('touchend', stopContinuous);
+        document.addEventListener('mouseup', stopContinuous);
+        window.addEventListener('blur', stopContinuous);
+      }
     });
   }
 

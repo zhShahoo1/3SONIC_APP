@@ -155,6 +155,8 @@ class Config:
 
     # ---- Scan-path presets (mm) ----
     # Env overrides (optional):
+    # Default E-axis step for rotation (mm). Increase for slightly faster rotation.
+    E_AXIS_DEFAULT_STEP: float = _env_float("E_AXIS_DEFAULT_STEP", 0.15)
     #   SCAN_LONG_START_X / SCAN_LONG_END_X
     #   SCAN_SHORT_START_X / SCAN_SHORT_END_X
     LONG_PATH_X: tuple[float, float] = (
@@ -229,6 +231,16 @@ class Config:
     # Frontend stream reload hints (used by JS; not injected automatically)
     FRONTEND_US_RELOAD_MIN_MS: int = int(_env_float("FRONTEND_US_RELOAD_MIN_MS", 1500))
     FRONTEND_US_RELOAD_PERIOD_MS: int = int(_env_float("FRONTEND_US_RELOAD_PERIOD_MS", 60000))
+
+    # UI continuous-move defaults (used by client/server hold-to-move logic)
+    # Slightly higher default for snappier UI control; still clampable by env
+    UI_DEFAULT_FEED_MM_PER_MIN: float = _env_float("UI_DEFAULT_FEED_MM_PER_MIN", 360.0)
+    UI_MAX_FEED_MM_PER_MIN: float = _env_float("UI_MAX_FEED_MM_PER_MIN", 5000.0)
+    # UI tick (seconds) used for continuous hold-to-move (higher = fewer writes)
+    # Smaller tick means slightly higher command cadence — keep reasonable lower bound
+    UI_DEFAULT_TICK_S: float = _env_float("UI_DEFAULT_TICK_S", 0.02)
+    # Rotation safety: maximum continuous rotation duration (seconds)
+    UI_ROTATION_MAX_S: float = _env_float("UI_ROTATION_MAX_S", 100.0)
 
     # Desktop window title (pywebview)
     UI_TITLE: str = os.environ.get("UI_TITLE", "3SONIC 3D Ultrasound app")

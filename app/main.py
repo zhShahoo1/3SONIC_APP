@@ -174,6 +174,7 @@ def _wait_until_axis(
         time.sleep(poll)
     return False
 
+
 @app.route("/api/lower-plate", methods=["POST"])
 def api_lower_plate():
     try:
@@ -198,6 +199,7 @@ def api_lower_plate():
         )
     except Exception as e:
         return jsonify(success=False, message=str(e), status="Error"), 500
+
 
 @app.route("/api/position-for-scan", methods=["POST"])
 def api_position_for_scan():
@@ -284,17 +286,249 @@ def handle_open_itksnap():
 # ------------------------------------------------------------------------------
 _JOG_Q: "queue.Queue[tuple[str, float]]" = queue.Queue(maxsize=64)
 
+# Lock to serialize mode changes (G90/G91) so relative-mode loops don't race
+# with absolute E-axis moves. Acquired by any code that issues G91/G90 or
+# calls rotate helpers which rely on absolute E moves.
+_UI_MODE_LOCK = threading.Lock()
+
 def _jog_worker():
     while True:
         direction, step = _JOG_Q.get()
         try:
-            pssc.jog_once(direction, step)  # implement in scanner_control.py
+            # Prevent races between relative-mode jogs (which set G91) and
+            # absolute E-axis rotates. Acquire mode lock for rotate operations
+            # and for any jogs that will switch into relative mode briefly.
+            if isinstance(direction, str) and direction.startswith("rotate"):
+                with _UI_MODE_LOCK:
+                    pssc.jog_once(direction, step)
+            else:
+                # For non-rotate jogs, also acquire the lock while we set G91
+                # and perform the rapid relative moves to avoid interleaving
+                # an absolute E move concurrently.
+                with _UI_MODE_LOCK:
+                    pssc.jog_once(direction, step)
         except Exception as e:
             print("[jog worker] error:", e)
         finally:
             _JOG_Q.task_done()
 
 threading.Thread(target=_jog_worker, daemon=True).start()
+
+
+# ------------------------------------------------------------------------------
+# UI continuous movement (for button hold behavior)
+# ------------------------------------------------------------------------------
+_UI_MOVE_THREADS: dict[tuple[str, int], tuple[threading.Thread, threading.Event]] = {}
+_UI_MOVE_LOCK = threading.Lock()
+
+
+def _map_ui_action_to_direction(action: str) -> str:
+    """Map frontend `data-action` to internal direction names used by jog_once.
+
+    Frontend uses kebab-case (e.g. `x-plus`, `rot-cw`). Convert to the
+    canonical direction names used elsewhere in the app.
+    """
+    mapping = {
+        "x-plus": "Xplus",
+        "x-minus": "Xminus",
+        "y-plus": "Yplus",
+        "y-minus": "Yminus",
+        "z-plus": "Zplus",
+        "z-minus": "Zminus",
+        "rot-cw": "rotateClockwise",
+        "rot-ccw": "rotateCounterclockwise",
+    }
+    return mapping.get(action, action)
+
+
+def _start_ui_continuous_move(action: str, feed_mm_per_min: float = 300.0, tick_s: float = 0.02) -> bool:
+    """Start continuous motion driven by UI hold events.
+
+    This launches a background thread that issues small relative moves at a
+    steady cadence. For XYZ we use `send_now` with `G91`/`G1` small steps for
+    smoother motion. For rotation we send small `E` moves similarly.
+    """
+    direction = _map_ui_action_to_direction(action)
+
+    allowed = {
+        "Xplus", "Xminus", "Yplus", "Yminus", "Zplus", "Zminus",
+        "rotateClockwise", "rotateCounterclockwise",
+    }
+    if direction not in allowed:
+        raise ValueError("Invalid direction")
+
+    # Clamp feed
+    try:
+        max_feed = float(getattr(Config, "UI_MAX_FEED_MM_PER_MIN", 5000.0))
+    except Exception:
+        max_feed = 5000.0
+    feed_mm_per_min = max(1.0, min(float(feed_mm_per_min), max_feed))
+
+    # Key to identify running thread: (direction, step-granularity)
+    if direction.startswith("rotate"):
+        step_key = int(round(float(getattr(Config, "ELEV_RESOLUTION_MM", 0.06)) * 1000))
+        key = (direction, step_key)
+    else:
+        axis = direction[0].upper()
+        sign = 1 if direction.endswith("plus") else -1
+        key = (axis, sign)
+
+    with _UI_MOVE_LOCK:
+        if key in _UI_MOVE_THREADS:
+            return False
+        stop_flag = threading.Event()
+
+        def _worker():
+            try:
+                if not direction.startswith("rotate"):
+                    axis = direction[0].upper()
+                    sign = 1 if direction.endswith("plus") else -1
+
+                    v_mm_s = float(feed_mm_per_min) / 60.0
+                    step = max(0.0005, v_mm_s * float(tick_s))
+
+                    # Serialize against absolute E-axis moves so the firmware
+                    # mode (G90/G91) cannot be flipped concurrently.
+                    with _UI_MODE_LOCK:
+                        # Attempt initial setup; if send_now indicates no connection,
+                        # abort the worker to avoid spinning with no effect.
+                        ok_setup = True
+                        if not send_now("G91"):
+                            ok_setup = False
+                        if not send_now(f"G1 F{int(float(feed_mm_per_min))}"):
+                            ok_setup = False
+
+                        if not ok_setup:
+                            print("[_ui_move] aborted: serial not available during setup")
+                            return
+
+                        while not stop_flag.is_set():
+                            ok = send_now(f"G1 {axis}{sign * step:.4f}")
+                            if not ok:
+                                print("[_ui_move] send_now failed during continuous move; aborting")
+                                break
+                            time.sleep(float(tick_s))
+
+                        try:
+                            send_now("G90")
+                        except Exception:
+                            pass
+
+                else:
+                    sign = 1 if direction == "rotateClockwise" else -1
+                    try:
+                        e_feed = float(feed_mm_per_min)
+                    except Exception:
+                        e_feed = float(getattr(Config, "UI_DEFAULT_FEED_MM_PER_MIN", 300.0))
+
+                    v_mm_s = float(e_feed) / 60.0
+                    e_step = max(0.0005, v_mm_s * float(tick_s))
+
+                    try:
+                        # Allow cold extrusion if configured (mirrors scanner_control behavior)
+                        try:
+                            if bool(getattr(Config, "E_AXIS_ALLOW_COLD_EXTRUSION", True)):
+                                send_now("M302 P1")
+                        except Exception:
+                            pass
+
+                        # Do not switch to relative mode for rotations; rotate helpers
+                        # perform absolute E moves and ensure units/absolute themselves.
+                        # We still allow cold extrusion via M302 above.
+                    except Exception:
+                        pass
+
+                    print(f"[_ui_move] rotate worker started: dir={'CW' if sign==1 else 'CCW'}, feed={e_feed}, tick={tick_s}")
+
+                    start_time = time.time()
+                    max_run = float(getattr(Config, "UI_ROTATION_MAX_S", 10.0))
+                    try:
+                        e_step_precise = float(getattr(Config, "E_AXIS_DEFAULT_STEP", 0.1))
+                    except Exception:
+                        e_step_precise = 0.1
+
+                    # Serialize with other UI mode-changing operations so absolute
+                    # E-axis moves can't be misinterpreted while another worker
+                    # temporarily set relative mode.
+                    # Mobile-style rotation: use small relative E moves (G91 + G1 E..)
+                    # This tends to feel smoother for continuous user presses. We
+                    # still acquire _UI_MODE_LOCK so no absolute E moves interleave.
+                    with _UI_MODE_LOCK:
+                        try:
+                            if bool(getattr(Config, "E_AXIS_ALLOW_COLD_EXTRUSION", True)):
+                                send_now("M302 P1")
+                        except Exception:
+                            pass
+
+                        # set relative mode and planner feed (best-effort)
+                        if not send_now("G91"):
+                            print("[_ui_move] rotate aborted: serial unavailable for G91")
+                            return
+                        send_now(f"G1 F{int(e_feed)}")
+
+                        # compute step using e_feed and requested tick for smoothness
+                        try:
+                            v_mm_s = float(e_feed) / 60.0
+                            e_step = max(0.0005, v_mm_s * float(tick_s))
+                        except Exception:
+                            e_step = max(0.0005, 0.1 * float(tick_s))
+
+                        while not stop_flag.is_set() and (time.time() - start_time) < max_run:
+                            ok = send_now(f"G1 E{sign * e_step:.4f}")
+                            if not ok:
+                                print("[_ui_move] rotate send_now failed; aborting")
+                                break
+                            time.sleep(max(float(tick_s), 0.01))
+
+                        try:
+                            send_now("G90")
+                        except Exception:
+                            pass
+
+                    # rotate helpers persist E internally; ensure absolute mode
+                    try:
+                        send_now("G90")
+                    except Exception:
+                        pass
+
+            finally:
+                with _UI_MOVE_LOCK:
+                    _UI_MOVE_THREADS.pop(key, None)
+
+        t = threading.Thread(target=_worker, daemon=True)
+        _UI_MOVE_THREADS[key] = (t, stop_flag)
+        t.start()
+        return True
+
+
+def _stop_ui_continuous_move(action: str | None = None):
+    """Stop previously started continuous move(s)."""
+    with _UI_MOVE_LOCK:
+        if action is None:
+            items = list(_UI_MOVE_THREADS.items())
+        else:
+            direction = _map_ui_action_to_direction(action)
+            if direction.startswith("rotate"):
+                items = [(k, v) for k, v in _UI_MOVE_THREADS.items() if k[0] in ("rotateClockwise", "rotateCounterclockwise")]
+            else:
+                axis = direction[0].upper()
+                sign = 1 if direction.endswith("plus") else -1
+                items = [((axis, sign), _UI_MOVE_THREADS.get((axis, sign)))] if (axis, sign) in _UI_MOVE_THREADS else []
+
+        for k, pair in items:
+            if not pair:
+                continue
+            _, stop_flag = pair
+            try:
+                stop_flag.set()
+            except Exception:
+                pass
+    # Additionally, ensure firmware is not left in relative mode for safety.
+    try:
+        send_now("G90")
+    except Exception:
+        pass
+
 
 @app.route("/move_probe", methods=["POST"])
 def move_probe():
@@ -308,12 +542,108 @@ def move_probe():
     }
     if direction not in allowed:
         return jsonify(success=False, message="Invalid direction"), 400
+    # Short debounce on server: ignore repeated identical rotate commands
+    # that arrive within a very short window (likely duplicate UI events).
+    try:
+        if direction in ("rotateClockwise", "rotateCounterclockwise"):
+            _last = globals().get("_LAST_ROTATE", None)
+            now = time.time()
+            if _last and _last.get("direction") == direction and (now - _last.get("time", 0)) < 0.25:
+                # Treat as duplicate — acknowledge but do not queue.
+                return jsonify(success=True, message="duplicate-ignored"), 200
+            globals()['_LAST_ROTATE'] = {"direction": direction, "time": now}
+    except Exception:
+        pass
+    # If a continuous rotate is active, reject single-step rotate requests
+    if direction in ("rotateClockwise", "rotateCounterclockwise"):
+        with _UI_MOVE_LOCK:
+            for k in _UI_MOVE_THREADS.keys():
+                if isinstance(k, tuple) and k[0] in ("rotateClockwise", "rotateCounterclockwise"):
+                    return jsonify(success=False, message="Rotation already active"), 409
 
     try:
         _JOG_Q.put_nowait((direction, step))
         return jsonify(success=True, message=f"queued {direction} {step}")
     except queue.Full:
         return jsonify(success=False, message="Jog queue full"), 429
+
+
+
+@app.route("/move_probe/start", methods=["POST"])
+def move_probe_start():
+    """Start continuous motion for UI hold. Body JSON: { action: 'x-plus', speed: 300.0, tick_s: 0.02 }
+    """
+    data = request.get_json(silent=True) or {}
+    action = data.get("action") or data.get("direction")
+    if not action:
+        return jsonify(success=False, message="Missing action"), 400
+
+    try:
+        default_speed = float(getattr(Config, "UI_DEFAULT_FEED_MM_PER_MIN", 300.0))
+    except Exception:
+        default_speed = 300.0
+
+    try:
+        speed = float(data.get("speed", default_speed))
+    except Exception:
+        speed = default_speed
+
+    try:
+        max_speed = float(getattr(Config, "UI_MAX_FEED_MM_PER_MIN", 5000.0))
+    except Exception:
+        max_speed = 5000.0
+    speed = max(1.0, min(speed, max_speed))
+
+    try:
+        tick = float(data.get("tick_s", 0.02))
+    except Exception:
+        tick = float(getattr(Config, "UI_DEFAULT_TICK_S", 0.03))
+    # Enforce a sensible server-side minimum tick to avoid serial saturation
+    try:
+        server_min_tick = float(getattr(Config, "UI_DEFAULT_TICK_S", 0.03))
+    except Exception:
+        server_min_tick = 0.03
+    tick = max(server_min_tick, min(tick, 0.5))
+
+    try:
+        started = _start_ui_continuous_move(action, feed_mm_per_min=speed, tick_s=tick)
+        if not started:
+            return jsonify(success=False, message="already running"), 409
+        return jsonify(success=True, message="started")
+    except ValueError:
+        return jsonify(success=False, message="Invalid action"), 400
+    except Exception as e:
+        print(f"[UI-move] start error: {e}")
+        return jsonify(success=False, message=str(e)), 500
+
+
+@app.route("/move_probe/stop", methods=["POST"])
+def move_probe_stop():
+    """Stop continuous motion. Body: { action: 'x-plus' } or empty to stop all."""
+    data = request.get_json(silent=True) or {}
+    action = data.get("action", None)
+    try:
+        _stop_ui_continuous_move(action)
+        return jsonify(success=True, message="stopped")
+    except Exception as e:
+        return jsonify(success=False, message=str(e)), 500
+
+
+@app.route("/move_probe/status", methods=["GET"])
+def move_probe_status():
+    """Return currently active UI continuous moves.
+
+    JSON: { active: [ { "key": "X,1" , "direction": "Xplus" }, ... ] }
+    """
+    out = []
+    with _UI_MOVE_LOCK:
+        for k in list(_UI_MOVE_THREADS.keys()):
+            # represent key for debugging: for rotate keys it's (direction, step_key)
+            if isinstance(k, tuple) and len(k) == 2:
+                out.append({"key": f"{k[0]}:{k[1]}", "direction": k[0]})
+            else:
+                out.append({"key": str(k), "direction": str(k[0] if isinstance(k, (list, tuple)) and k else k)})
+    return jsonify(success=True, active=out)
 
 @app.route("/initscanner")
 def initscanner():

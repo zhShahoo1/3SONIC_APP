@@ -290,6 +290,11 @@ footer p{ color: var(--text-dim); margin: 0; }
   border-color: var(--nordic-frost);
 }
 
+/* Visual feedback for active continuous motion */
+.active-moving{ box-shadow: 0 0 12px rgba(163,190,140,.35) !important; transform: translateY(-1px); }
+body.motion-active .button{ opacity: 0.9; }
+body.motion-active .button[disabled]{ opacity: 0.5; }
+
 /* Z row + rotation */
 .z-row{ display: grid; grid-template-columns: 1fr 1fr; gap: .5rem; max-width: 260px; margin: 0 auto .75rem; }
 .z-btn{ height: 42px; font-size: .86rem; }
