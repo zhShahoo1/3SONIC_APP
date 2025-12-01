@@ -216,9 +216,19 @@
 <script src="{{ url_for('static', filename='js/ui_controls.js') }}"></script>
 <script>
   // Inject UI defaults from server-side Config if present
+  window.__UI_LINEAR_FEED = parseFloat("{{ config.UI_LINEAR_FEED_MM_PER_MIN if config else 300.0 }}");
+  window.__UI_ROTATION_FEED = parseFloat("{{ config.UI_ROTATION_FEED_MM_PER_MIN if config else 160.0 }}");
+  // Back-compat default
   window.__UI_DEFAULT_FEED = parseFloat("{{ config.UI_DEFAULT_FEED_MM_PER_MIN if config else 300.0 }}");
   window.__UI_MAX_FEED = parseFloat("{{ config.UI_MAX_FEED_MM_PER_MIN if config else 5000.0 }}");
   window.__UI_DEFAULT_TICK = parseFloat("{{ config.UI_DEFAULT_TICK_S if config else 0.03 }}");
+  // Additional injected friendly tunables
+  window.__UI_ROTATION_MAX_S = parseFloat("{{ config.UI_ROTATION_MAX_S if config else 100.0 }}");
+  window.__E_AXIS_DEFAULT_STEP = parseFloat("{{ config.E_AXIS_DEFAULT_STEP if config else 0.15 }}");
+  window.__UI_HOLD_THRESHOLD_MS = parseInt("{{ config.UI_HOLD_THRESHOLD_MS if config else 150 }}");
+  window.__UI_CLICK_SUPPRESS_MS = parseInt("{{ config.UI_CLICK_SUPPRESS_MS if config else 350 }}");
+  window.__FRONTEND_US_RELOAD_MIN_MS = parseInt("{{ config.FRONTEND_US_RELOAD_MIN_MS if config else 1500 }}");
+  window.__FRONTEND_US_RELOAD_PERIOD_MS = parseInt("{{ config.FRONTEND_US_RELOAD_PERIOD_MS if config else 60000 }}");
 </script>
 <script src="{{ url_for('static', filename='js/app.js') }}"></script>
 

@@ -374,8 +374,8 @@
   const rotateCCW = debounce(async (step) => { try { await apiPostJSON(ENDPOINTS.move, { direction: "rotateCounterclockwise", step }); } catch (e) { console.error("[rotate] CCW error:", e.message); } }, 120);
 
   // Continuous rotation settings (used when button is held)
-  const ROT_FEED = window.__UI_DEFAULT_FEED || 250.0;
-  const ROT_TICK = window.__UI_DEFAULT_TICK || 0.01;
+  const ROT_FEED = window.__UI_ROTATION_FEED || window.__UI_DEFAULT_FEED || 160.0;
+  const ROT_TICK = window.__UI_DEFAULT_TICK || 0.02;
   // ---------------------- Insert Bath / Scan Toggle -------------------------
   function bindInsertBath() {
     const btn = $(SELECTORS.lowerPlateBtn);
@@ -417,7 +417,8 @@
   function bindButtons() {
     // Track recent hold timestamps to suppress click after a hold
     const _holdTs = {};
-    const HOLD_THRESHOLD_MS = 150;
+    const HOLD_THRESHOLD_MS = window.__UI_HOLD_THRESHOLD_MS || 150;
+    const CLICK_SUPPRESS_MS = window.__UI_CLICK_SUPPRESS_MS || 350;
 
     $$(SELECTORS.buttons).forEach((btn) => {
       const action = btn.dataset.action;
@@ -426,7 +427,7 @@
         const quick = ev.shiftKey;
         // If this button was just used as a hold, suppress the click
         const last = _holdTs[action] || 0;
-        if (last && (performance.now() - last) < 350) { ev.preventDefault(); return; }
+        if (last && (performance.now() - last) < CLICK_SUPPRESS_MS) { ev.preventDefault(); return; }
 
         switch (action) {
           case "init": return initScanner(btn);
@@ -506,6 +507,7 @@
       }
     });
   }
+  
 
   // Keyboard shortcuts
   function bindKeyboard() {
@@ -778,6 +780,8 @@
       const apply = () => stepEl.classList.toggle("danger-step", parseFloat(stepEl.value || "1") >= 5);
       stepEl.addEventListener("change", apply); apply();
     }
+
+    
   }
 
   document.addEventListener("DOMContentLoaded", init);

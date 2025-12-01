@@ -1,8 +1,13 @@
 (function(){
   // UI hold-to-move controls. Attach to elements with `data-action`.
-  const FEED_DEFAULT = window.__UI_DEFAULT_FEED || 300.0;
+  // UI-only tuning: boost the linear feed slightly for snappier button response
   const FEED_MAX = window.__UI_MAX_FEED || 5000.0;
+  // Apply a client-side multiplier so the UI buttons feel faster without
+  // changing server-side defaults. Capped by FEED_MAX.
+  const FEED_DEFAULT = Math.min(FEED_MAX, (window.__UI_LINEAR_FEED || window.__UI_DEFAULT_FEED || 300.0) * 1.5);
   const TICK_DEFAULT = window.__UI_DEFAULT_TICK || 0.02;
+  const HOLD_THRESHOLD_MS = window.__UI_HOLD_THRESHOLD_MS || 150;
+  const CLICK_SUPPRESS_MS = window.__UI_CLICK_SUPPRESS_MS || 350;
 
   function postJson(url, body){
     return fetch(url, {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(body)});
@@ -59,10 +64,9 @@
       const action = btn.getAttribute('data-action');
       let holdActive = false;
       let lastHoldStart = 0;
-      const HOLD_THRESHOLD_MS = 150; // treat longer presses as holds (suppress click)
-
       // For rotation actions we only support single-step clicks (match app.js).
       const isRotation = action === 'rot-cw' || action === 'rot-ccw';
+      const HOLD_THRESHOLD = HOLD_THRESHOLD_MS; // local alias for readability
 
       // Start on mousedown / touchstart (only for non-rotation moves)
       const onStart = (ev)=>{
@@ -88,7 +92,7 @@
       const onClick = (ev)=>{
         ev.preventDefault();
         // if a continuous motion is active (locally held), ignore single-step clicks
-        if(lastHoldStart && (performance.now() - lastHoldStart) > HOLD_THRESHOLD_MS) return;
+        if(lastHoldStart && (performance.now() - lastHoldStart) > HOLD_THRESHOLD) return;
         // also ignore if server reports motion active
         if(document.body.classList.contains('motion-active')) return;
         const step = distance ? parseFloat(distance.value || distance.options[distance.selectedIndex].value) : 1;

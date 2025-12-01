@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import threading
 import time
+import os
 
 # third-party (Windows: pip install keyboard pygetwindow)
 import keyboard
@@ -11,6 +12,7 @@ import pygetwindow as gw
 from app.config import Config
 from app.core.serial_manager import send_gcode, send_now, connected_event
 from app.core.scanner_control import go2INIT
+from app.core import scanner_control as pssc
 
 # ===== Public toggle used by main.py =====
 _keyboard_enabled = True
@@ -19,9 +21,20 @@ def enable_keyboard(flag: bool) -> None:
     _keyboard_enabled = bool(flag)
 
 # ===== Settings =====
-FEEDRATE = int(getattr(Config, "MANUAL_JOG_FEED_MM_PER_MIN", 4000))  # fast manual jogs
+_ui_feed = float(getattr(Config, "UI_LINEAR_FEED_MM_PER_MIN", 360.0))
+# Keyboard manual jog feed: prefer an explicit override `MANUAL_JOG_FEED_MM_PER_MIN`
+# but cap it so keyboard-controlled jogs remain slower than UI button-driven moves.
+manual_default = int(getattr(Config, "MANUAL_JOG_FEED_MM_PER_MIN", getattr(Config, "JOG_FEED_MM_PER_MIN", 2400)))
+# cap at 75% of UI linear feed (but allow a sensible minimum)
+cap = max(50, int(_ui_feed * 0.75))
+FEEDRATE = int(min(manual_default, cap))
+
 STEP_CONTINUOUS_MM = 0.10     # increment per tick for continuous arrows
 STEP_INTERVAL_S = 0.015       # tick period (lower = smoother/faster)
+# Optionally perform a quickstop (firmware-dependent) when a key is released
+# to halt motion immediately instead of letting queued small relative moves
+# drain through the planner. Set via env `KEYBOARD_QUICKSTOP_ON_RELEASE=1`.
+USE_QUICKSTOP = str(os.environ.get("KEYBOARD_QUICKSTOP_ON_RELEASE", "")).strip().lower() in ("1", "true", "yes", "on")
 WINDOW_TITLE_FRAGMENT = "3SONIC"   # only accept input when the app/window is focused
 
 # internal state
@@ -60,19 +73,34 @@ def _begin_continuous_jog(axis: str, sign: int) -> None:
         if key_id in _move_threads:
             return
 
-        if not connected_event().is_set():
-            print("[Keyboard] ⚠ Not connected; jog ignored.")
-            return
+        # Check connection in a resilient way (connected_event may be
+        # an Event or a callable that returns an Event). If we cannot
+        # determine connectivity, assume connected and let send_now fail
+        # gracefully.
+        try:
+            ev = connected_event() if callable(connected_event) else connected_event
+            if ev is not None and hasattr(ev, "is_set") and not ev.is_set():
+                print("[Keyboard] ⚠ Not connected; jog ignored.")
+                return
+        except Exception:
+            # conservative: proceed and let serial calls handle failures
+            pass
 
         _active_axis = key_id
         stop_flag = threading.Event()
 
         def _worker():
-            send_now("G91")
-            while not stop_flag.is_set():
-                send_now(f"G1 {axis}{sign * 0.1} F{FEEDRATE}")
-                time.sleep(0.015)
-            send_now("G90")
+            # Acquire the shared UI mode lock so we don't race with other
+            # code that switches absolute/relative modes (G90/G91).
+            try:
+                with getattr(pssc, "UI_MODE_LOCK", threading.Lock()):
+                    send_now("G91")
+                    while not stop_flag.is_set():
+                        send_now(f"G1 {axis}{sign * STEP_CONTINUOUS_MM:.4f} F{FEEDRATE}")
+                        time.sleep(STEP_INTERVAL_S)
+                    send_now("G90")
+            except Exception as e:
+                print(f"[Keyboard] continuous jog error: {e}")
 
         t = threading.Thread(target=_worker, daemon=True)
         _move_threads[key_id] = (t, stop_flag)
@@ -86,8 +114,28 @@ def _end_continuous_jog(axis: str, sign: int) -> None:
     with _move_lock:
         pair = _move_threads.pop(key_id, None)
         if pair:
-            _, stop_flag = pair
+            t, stop_flag = pair
+            # signal the worker to stop
             stop_flag.set()
+            # join briefly to allow the worker to restore G90 and finish cleanup
+            try:
+                t.join(timeout=0.5)
+            except Exception:
+                pass
+            # small settle to avoid immediate mode switching races
+            try:
+                import time as _time
+                _time.sleep(0.02)
+            except Exception:
+                pass
+            # If configured, send a quick-stop command to the firmware to halt
+            # motion immediately. This is firmware-dependent (Marlin supports
+            # M410). Enable via environment variable only when known safe.
+            if USE_QUICKSTOP:
+                try:
+                    send_now("M410")
+                except Exception:
+                    pass
         if _active_axis == key_id:
             _active_axis = None
 

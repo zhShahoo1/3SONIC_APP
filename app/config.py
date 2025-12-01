@@ -169,12 +169,13 @@ class Config:
     )
 
     # ---------------- Feedrates / speeds ----------------
-    SCAN_SPEED_MM_PER_MIN: float = _env_float("SCAN_SPEED", 90.0)     # used if SCAN_FEED_FROM_ER_FPS=False
+    SCAN_SPEED_MM_PER_MIN: float = _env_float("SCAN_SPEED", 180.0)     # used if SCAN_FEED_FROM_ER_FPS=False
     FAST_FEED_MM_PER_MIN: float = _env_float("FAST_FEED", 20.0 * 60)  # 1200 mm/min
     JOG_FEED_MM_PER_MIN: float = _env_float("JOG_FEED", 2400.0)       # ~40 mm/s
 
     # Compute scan feed from e_r and FPS for motion–ultrasound sync
-    SCAN_FEED_FROM_ER_FPS: bool = _env_bool("SCAN_FEED_FROM_ER_FPS", True)
+    # Prefer explicit SCAN_SPEED over computed e_r*FPS when set to False.
+    SCAN_FEED_FROM_ER_FPS: bool = _env_bool("SCAN_FEED_FROM_ER_FPS", False)
 
     # ---------------- Ultrasound / Live & Recording ----------------
     # Live preview size (also used as recording size unless RECORD_* set)
@@ -234,13 +235,33 @@ class Config:
 
     # UI continuous-move defaults (used by client/server hold-to-move logic)
     # Slightly higher default for snappier UI control; still clampable by env
-    UI_DEFAULT_FEED_MM_PER_MIN: float = _env_float("UI_DEFAULT_FEED_MM_PER_MIN", 360.0)
+    # UI feedrates: separate linear-axis (X/Y/Z) defaults from rotation (E-axis)
+    # Linear feed (used for X/Y/Z hold-to-move). Keep slightly faster than scan.
+    # Default set a bit above the computed scan-feed (default scan ≈ 90 mm/min).
+    # Increase UI linear feed for snappier X/Y/Z control
+    UI_LINEAR_FEED_MM_PER_MIN: float = _env_float("UI_LINEAR_FEED_MM_PER_MIN", 360.0)
+    # Rotation feed (E-axis) used for nozzle/probe rotation — keep reduced for finer control
+    UI_ROTATION_FEED_MM_PER_MIN: float = _env_float("UI_ROTATION_FEED_MM_PER_MIN", 80.0)
+
+    # Back-compat alias (some code/clients may still read UI_DEFAULT_FEED_MM_PER_MIN)
+    UI_DEFAULT_FEED_MM_PER_MIN: float = float(UI_LINEAR_FEED_MM_PER_MIN)
     UI_MAX_FEED_MM_PER_MIN: float = _env_float("UI_MAX_FEED_MM_PER_MIN", 5000.0)
     # UI tick (seconds) used for continuous hold-to-move (higher = fewer writes)
     # Smaller tick means slightly higher command cadence — keep reasonable lower bound
     UI_DEFAULT_TICK_S: float = _env_float("UI_DEFAULT_TICK_S", 0.02)
     # Rotation safety: maximum continuous rotation duration (seconds)
     UI_ROTATION_MAX_S: float = _env_float("UI_ROTATION_MAX_S", 100.0)
+
+    # UI click/hold timing (ms) used by frontend for consistent UX
+    # HOLD_THRESHOLD_MS: threshold to consider a press a 'hold' (suppress click)
+    UI_HOLD_THRESHOLD_MS: int = int(_env_float("UI_HOLD_THRESHOLD_MS", 150))
+    # CLICK_SUPPRESS_MS: time after a hold during which clicks are suppressed
+    UI_CLICK_SUPPRESS_MS: int = int(_env_float("UI_CLICK_SUPPRESS_MS", 350))
+
+    # Maximum step (mm) accepted from a single GUI click to avoid dangerous
+    # large moves if the client sends an unexpected value. Continuous hold
+    # movements still use their own cadence and are unaffected.
+    UI_MAX_CLICK_STEP_MM: float = _env_float("UI_MAX_CLICK_STEP_MM", 20.0)
 
     # Desktop window title (pywebview)
     UI_TITLE: str = os.environ.get("UI_TITLE", "3SONIC 3D Ultrasound app")
@@ -255,8 +276,9 @@ class Config:
         "Y": _env_float("SCAN_POSE_Y", 53.5),
         "Z": _env_float("SCAN_POSE_Z", 10.0),
     }
-    Z_FEED_MM_PER_MIN: int = int(_env_float("Z_FEED", 1500))
-    XYZ_FEED_MM_PER_MIN: int = int(_env_float("XYZ_FEED", 2000))
+    # Raise Z and XYZ default feeds for faster explicit positioning
+    Z_FEED_MM_PER_MIN: int = int(_env_float("Z_FEED", 3000))
+    XYZ_FEED_MM_PER_MIN: int = int(_env_float("XYZ_FEED", 3000))
     POS_TOL_MM: float = _env_float("POS_TOL_MM", 0.02)
     POLL_INTERVAL_S: float = _env_float("POLL_INTERVAL_S", 0.10)
     POLL_TIMEOUT_S: float = _env_float("POLL_TIMEOUT_S", 5.0)
@@ -326,3 +348,4 @@ class Config:
         """
         v = float(Config.ELEV_RESOLUTION_MM) * float(Config.TARGET_FPS)  # mm/s
         return 60.0 * v
+

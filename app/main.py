@@ -287,9 +287,11 @@ def handle_open_itksnap():
 _JOG_Q: "queue.Queue[tuple[str, float]]" = queue.Queue(maxsize=64)
 
 # Lock to serialize mode changes (G90/G91) so relative-mode loops don't race
-# with absolute E-axis moves. Acquired by any code that issues G91/G90 or
-# calls rotate helpers which rely on absolute E moves.
-_UI_MODE_LOCK = threading.Lock()
+# with absolute E-axis moves. Prefer the shared lock exported from
+# `app.core.scanner_control` (`pssc.UI_MODE_LOCK`) so keyboard, UI and other
+# modules all synchronize on the same lock. Fall back to a local lock if the
+# shared one is not available (keeps behaviour safe for older deployments).
+_UI_MODE_LOCK = getattr(pssc, "UI_MODE_LOCK", threading.Lock())
 
 def _jog_worker():
     while True:
@@ -417,9 +419,9 @@ def _start_ui_continuous_move(action: str, feed_mm_per_min: float = 300.0, tick_
                 else:
                     sign = 1 if direction == "rotateClockwise" else -1
                     try:
-                        e_feed = float(feed_mm_per_min)
+                            e_feed = float(feed_mm_per_min)
                     except Exception:
-                        e_feed = float(getattr(Config, "UI_DEFAULT_FEED_MM_PER_MIN", 300.0))
+                        e_feed = float(getattr(Config, "UI_ROTATION_FEED_MM_PER_MIN", 160.0))
 
                     v_mm_s = float(e_feed) / 60.0
                     e_step = max(0.0005, v_mm_s * float(tick_s))
@@ -534,7 +536,22 @@ def _stop_ui_continuous_move(action: str | None = None):
 def move_probe():
     data = request.get_json(silent=True) or {}
     direction = data.get("direction")
-    step = float(data.get("step", 1))
+    try:
+        step = float(data.get("step", 1))
+    except Exception:
+        step = 1.0
+
+    # Clamp single-click steps to a safe maximum to avoid accidental large moves
+    try:
+        max_click = float(getattr(Config, "UI_MAX_CLICK_STEP_MM", 20.0))
+    except Exception:
+        max_click = 20.0
+    # For non-rotate moves, enforce the max per-click step
+    if isinstance(direction, str) and not direction.startswith("rotate"):
+        if step <= 0:
+            step = 1.0
+        if step > max_click:
+            step = max_click
 
     allowed = {
         "Xplus","Xminus","Yplus","Yminus","Zplus","Zminus",
@@ -579,7 +596,7 @@ def move_probe_start():
         return jsonify(success=False, message="Missing action"), 400
 
     try:
-        default_speed = float(getattr(Config, "UI_DEFAULT_FEED_MM_PER_MIN", 300.0))
+        default_speed = float(getattr(Config, "UI_LINEAR_FEED_MM_PER_MIN", 300.0))
     except Exception:
         default_speed = 300.0
 
@@ -644,6 +661,7 @@ def move_probe_status():
             else:
                 out.append({"key": str(k), "direction": str(k[0] if isinstance(k, (list, tuple)) and k else k)})
     return jsonify(success=True, active=out)
+
 
 @app.route("/initscanner")
 def initscanner():

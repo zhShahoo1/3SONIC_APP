@@ -1,25 +1,4 @@
 # app/core/scanner_control.py
-"""
-Scanner control built on the shared serial singleton.
-
-Public API (used by Flask routes / UI):
-- jog_once(direction, step)                # ← used by /move_probe queue worker
-- deltaMove(delta, axis)
-- rotate_nozzle_clockwise(step=value)
-- rotate_nozzle_counterclockwise(step=value)
-- go2INIT()
-- go2StartScan()
-- ScanPath()
-- get_position()                # returns list[str] (raw M114 lines)
-- get_position_axis(axis)       # Optional[float]
-
-Design notes:
-- Manual jogs are pure-relative fire-and-forget (send_now) to avoid serial queue
-  contention during rapid keyboard repeats.
-- Feedrates/geometry/offsets come from Config.
-- E-axis absolute position is persisted on disk.
-- Homing/INIT sequence verifies positions via M114 with tolerance.
-"""
 
 from __future__ import annotations
 
@@ -28,6 +7,10 @@ from pathlib import Path
 from typing import List, Optional, Tuple, Dict
 
 from app.config import Config
+
+# Shared lock for UI mode changes (G91/G90) to serialize relative vs absolute moves
+import threading
+UI_MODE_LOCK = threading.Lock()
 
 # --- serial plumbing ---------------------------------------------------------
 # We import everything best-effort and stay resilient if some helpers
@@ -355,7 +338,6 @@ def go2INIT() -> Tuple[bool, str]:
     try:
         print("[INIT] start")
         _ensure_units_and_absolute()
-        _allow_cold_extrusion_if_needed()
 
         print("[INIT] homing ...")
         ok, why = _home_sequence()
@@ -367,10 +349,9 @@ def go2INIT() -> Tuple[bool, str]:
         print(f"[INIT] fast_feed set to {fast_feed} mm/min")
         feedrate(fast_feed)
 
-        # Restore persisted E
-        e_axis_position = _read_e_axis_position(0.0)
-        move_absolute("E", e_axis_position)
-        print(f"[INIT] E restored to {e_axis_position:.3f}")
+        # Note: rotation / E-axis actions intentionally omitted from INIT.
+        # The E-axis persistent restore and cold-extrusion enable were removed
+        # to avoid changing rotation state during initialization.
 
         # Move to (0,0,10)
         print("[INIT] moving to X0 Y0 Z10 ...")
@@ -397,45 +378,15 @@ def go2INIT() -> Tuple[bool, str]:
         ok, last = _wait_until_xyz({"X": Xpos, "Y": Ypos, "Z": Zpos})
         print(f"[INIT] at center? ok={ok}, last={last}")
         if not ok:
-            return True, f"Nozzle initialized at E={e_axis_position:.3f} (center not within tolerance, last: {last})"
+            return True, f"Nozzle initialized (center not within tolerance, last: {last})"
 
         print("[INIT] done")
-        return True, f"Nozzle initialized and set to locked position: {e_axis_position:.3f}"
+        return True, "Nozzle initialized"
     except Exception as exc:
         print(f"[INIT] exception: {exc}")
         raise
 
 
-# def go2StartScan() -> bool:
-#     """Prepare for scan; move to X=0 at fast feed."""
-#     if not _ensure_connected():
-#         return False
-#     try:
-#         _ensure_units_and_absolute()
-#         feedrate(float(getattr(Config, "FAST_FEED_MM_PER_MIN", 1200)))
-#         send_gcode("G0 X0")
-#         wait_for_motion_complete(10.0)
-#         return True
-#     except Exception as exc:
-#         print(f"[go2StartScan] {exc}")
-#         return False
-
-
-# def ScanPath() -> bool:
-#     """Traverse X across full span at configured scan feed."""
-#     if not _ensure_connected():
-#         return False
-#     try:
-#         _ensure_units_and_absolute()
-#         scan_feed = float(getattr(Config, "SCAN_SPEED_MM_PER_MIN", 90))
-#         feedrate(scan_feed)
-#         send_gcode(f"G0 X{float(Config.X_MAX):.3f}")
-#         # generous timeout for full-span move
-#         wait_for_motion_complete(120.0)
-#         return True
-#     except Exception as exc:
-#         print(f"[ScanPath] {exc}")
-#         return False
 def go2StartScan(start_x: float | None = None) -> bool:
     """Move to start_x (or X=0) at fast feed."""
     if not _ensure_connected():
