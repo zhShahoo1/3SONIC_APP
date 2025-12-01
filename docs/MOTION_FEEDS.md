@@ -51,10 +51,11 @@ Each entry includes the symbol name and the file where it is defined so develope
   - File: `app/config.py`
 
 - UI maximum allowed feed
-  - Value: 5000.0 mm/min
+ - UI maximum allowed feed
+  - Value: 1200.0 mm/min
   - Symbol: `Config.UI_MAX_FEED_MM_PER_MIN`
   - File: `app/config.py`
-  - Equivalent: 83.33 mm/s (5000.0 ÷ 60)
+  - Equivalent: 20.0 mm/s (1200.0 ÷ 60)
 
 - Hold-to-move tick (server/client cadence)
   - Value: 0.02 s

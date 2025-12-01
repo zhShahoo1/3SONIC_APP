@@ -245,7 +245,9 @@ class Config:
 
     # Back-compat alias (some code/clients may still read UI_DEFAULT_FEED_MM_PER_MIN)
     UI_DEFAULT_FEED_MM_PER_MIN: float = float(UI_LINEAR_FEED_MM_PER_MIN)
-    UI_MAX_FEED_MM_PER_MIN: float = _env_float("UI_MAX_FEED_MM_PER_MIN", 5000.0)
+    # Limit the maximum feed rate the UI can request for hold-to-move controls.
+    # Lower default to a conservative value (safer for printer-based hardware).
+    UI_MAX_FEED_MM_PER_MIN: float = _env_float("UI_MAX_FEED_MM_PER_MIN", 1200.0)
     # UI tick (seconds) used for continuous hold-to-move (higher = fewer writes)
     # Smaller tick means slightly higher command cadence — keep reasonable lower bound
     UI_DEFAULT_TICK_S: float = _env_float("UI_DEFAULT_TICK_S", 0.02)
