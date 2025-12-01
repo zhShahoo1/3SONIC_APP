@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import time
+import math
 from pathlib import Path
 from typing import List, Optional, Tuple, Dict
 
@@ -289,16 +290,23 @@ def _wait_until_xyz(target: Dict[str, float],
     """Poll M114 until X/Y/Z within tol of target; return (ok, last_seen)."""
     t0 = time.time()
     last: Dict[str, Optional[float]] = {"X": None, "Y": None, "Z": None}
+    # Use a single M114 per poll iteration (avoid calling get_position_axis 3x)
     while (time.time() - t0) <= timeout_s:
-        cx = get_position_axis("X")
-        cy = get_position_axis("Y")
-        cz = get_position_axis("Z")
-        last = {"X": cx, "Y": cy, "Z": cz}
-        if all(v is not None for v in last.values()):
-            if (abs(last["X"] - target["X"]) <= tol and
-                abs(last["Y"] - target["Y"]) <= tol and
-                abs(last["Z"] - target["Z"]) <= tol):
-                return True, last
+        try:
+            lines = get_position()
+            parsed = _parse_m114(lines)
+            cx = parsed.get("X")
+            cy = parsed.get("Y")
+            cz = parsed.get("Z")
+            last = {"X": cx, "Y": cy, "Z": cz}
+            if all(v is not None for v in last.values()):
+                if (abs(last["X"] - target["X"]) <= tol and
+                    abs(last["Y"] - target["Y"]) <= tol and
+                    abs(last["Z"] - target["Z"]) <= tol):
+                    return True, last
+        except Exception:
+            # tolerate transient parse errors and continue polling
+            pass
         time.sleep(poll_s)
     return False, last
 
