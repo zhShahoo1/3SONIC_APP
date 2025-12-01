@@ -76,10 +76,11 @@ Each entry includes the symbol name and the file where it is defined so develope
   - Note: E-axis persistent file referenced in `app/core/scanner_control.py` (see `_E_AXIS_POS_FILE`).
 
 - Z / explicit positioning feeds
-  - `Z_FEED_MM_PER_MIN`: 3000 mm/min
-  - `XYZ_FEED_MM_PER_MIN`: 3000 mm/min
+ - Z / explicit positioning feeds
+  - `Z_FEED_MM_PER_MIN`: 1200 mm/min
+  - `XYZ_FEED_MM_PER_MIN`: 1200 mm/min
   - File: `app/config.py`
-  - Equivalent: 50.0 mm/s (3000 ÷ 60)
+  - Equivalent: 20.0 mm/s (1200 ÷ 60)
 
 - Travel speed (recorder legacy; mm/s)
   - Value: 0.5 mm/s (legacy `TRAVEL_SPEED_X` default)

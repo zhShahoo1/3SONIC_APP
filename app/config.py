@@ -276,9 +276,10 @@ class Config:
         "Y": _env_float("SCAN_POSE_Y", 53.5),
         "Z": _env_float("SCAN_POSE_Z", 10.0),
     }
-    # Raise Z and XYZ default feeds for faster explicit positioning
-    Z_FEED_MM_PER_MIN: int = int(_env_float("Z_FEED", 3000))
-    XYZ_FEED_MM_PER_MIN: int = int(_env_float("XYZ_FEED", 3000))
+    # Raise Z and XYZ default feeds for explicit positioning.
+    # Lowered default to a conservative value for safer operation on unknown hardware.
+    Z_FEED_MM_PER_MIN: int = int(_env_float("Z_FEED", 1200))
+    XYZ_FEED_MM_PER_MIN: int = int(_env_float("XYZ_FEED", 1200))
     POS_TOL_MM: float = _env_float("POS_TOL_MM", 0.02)
     POLL_INTERVAL_S: float = _env_float("POLL_INTERVAL_S", 0.10)
     POLL_TIMEOUT_S: float = _env_float("POLL_TIMEOUT_S", 5.0)
