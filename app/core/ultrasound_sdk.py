@@ -25,6 +25,7 @@ from typing import Tuple, Generator, Optional
 import numpy as np
 import cv2
 from ctypes import cdll, c_uint32, c_float, pointer
+from PIL import Image, ImageDraw, ImageFont
 
 from app.config import Config
 
@@ -402,18 +403,28 @@ def generate_image(*_unused, **_unused_kw) -> Generator[bytes, None, None]:
             buffer = np.frombuffer(p_array, np.uint32)
             reshaped = np.reshape(buffer, (w, h, 4))  # keep native orientation
 
-            # Build scalebar mask once (for native orientation)
-            if mask is None:
-                mask = get_mask(reshaped, inst.resolution)
+            # Refresh resolution from DLL in case user changed depth/settings
+            try:
+                res_X = c_float(0.0)
+                res_Y = c_float(0.0)
+                dll.get_resolution(pointer(res_X), pointer(res_Y))
+                inst._res = (float(res_X.value), float(res_Y.value))
+            except Exception:
+                # keep previous resolution if query fails
+                pass
 
-            reshaped = draw_scale_bar(reshaped, mask, 255)
-            reshaped = np.clip(reshaped, 0, 255).astype(np.uint8)
-
-            # RGB (drop alpha)
-            rgb = reshaped[:, :, :3]
+            # RGB (drop alpha) and ensure 8-bit per channel
+            rgb = reshaped[:, :, :3].astype(np.uint8)
 
             # Force the correct view: vertical flip (top↔bottom)
             rgb = cv2.flip(rgb, 0)
+
+            # Overlay a professional depth sidebar using PIL drawing.
+            try:
+                rgb = _render_with_scale_pil(rgb, inst.resolution)
+            except Exception:
+                # If overlay fails, fall back to raw rgb
+                pass
 
             ok, jpeg = cv2.imencode(".jpg", rgb)
             if ok:
@@ -434,6 +445,108 @@ def generate_image(*_unused, **_unused_kw) -> Generator[bytes, None, None]:
                 if ok:
                     yield jpeg.tobytes()
                 time.sleep(0.5)
+
+
+def _render_with_scale_pil(rgb: np.ndarray, resolution: Tuple[float, float]) -> np.ndarray:
+    """
+    Render an RGB numpy image with a professional depth sidebar on the right.
+    Returns a new RGB numpy array.
+    """
+    # Convert to PIL RGBA for overlay work
+    img = Image.fromarray(rgb.astype('uint8'), mode="RGB").convert("RGBA")
+    w, h = img.size
+
+    # Estimate display depth (mm) from resolution if available
+    display_depth_mm = None
+    px_per_mm = None
+    try:
+        if resolution and resolution[1] and resolution[1] > 0:
+            mm_per_px = float(resolution[1])
+            px_per_mm = 1.0 / mm_per_px
+            display_depth_mm = h / px_per_mm
+    except Exception:
+        display_depth_mm = None
+
+    if display_depth_mm is None or display_depth_mm <= 0:
+        display_depth_mm = 120.0
+    if px_per_mm is None or px_per_mm <= 0:
+        px_per_mm = h / display_depth_mm
+
+    # Compute nice major tick interval to yield ~6 ticks
+    def _nice_interval(max_mm: float, target_ticks: int = 6) -> int:
+        import math
+        raw = max_mm / target_ticks
+        if raw <= 0:
+            return 10
+        magnitude = 10 ** math.floor(math.log10(raw))
+        for factor in (1, 2, 5):
+            interval = factor * magnitude
+            if raw <= interval:
+                return int(interval)
+        return int(10 * magnitude)
+
+    major_mm = _nice_interval(display_depth_mm, target_ticks=6)
+    minor_div = 5
+    minor_mm = max(1, major_mm // minor_div)
+
+    # Prepare overlay
+    overlay = Image.new("RGBA", img.size, (0, 0, 0, 0))
+    draw = ImageDraw.Draw(overlay)
+
+    # Sidebar area: rightmost 8% of width (tunable)
+    sidebar_w = max(64, int(w * 0.08))
+    bg_x0 = w - sidebar_w
+    bg_x1 = w
+    # No filled background: render ticks/labels transparently over the image
+
+    # Tick geometry
+    tick_x = bg_x0 + int(sidebar_w * 0.08)
+    tick_major_len = int(sidebar_w * 0.35)
+    tick_minor_len = int(sidebar_w * 0.18)
+
+    # Font for labels (prefer a clean sans-serif if available)
+    font = None
+    font_size = max(18, int(sidebar_w * 0.45))
+    for fname in ("DejaVuSans-Bold.ttf", "Arial.ttf", "LiberationSans-Bold.ttf"):
+        try:
+            font = ImageFont.truetype(fname, font_size)
+            break
+        except Exception:
+            font = None
+    if font is None:
+        font = ImageFont.load_default()
+
+    # Draw ticks and labels
+    import math
+    max_depth = int(math.ceil(display_depth_mm))
+    for depth in range(0, max_depth + 1, minor_mm):
+        y = int(round((depth / display_depth_mm) * h))
+        if y < 0 or y > h:
+            continue
+        if depth % major_mm == 0:
+            # major tick
+            draw.line([(tick_x, y), (tick_x + tick_major_len, y)], fill=(255, 255, 255, 220), width=2)
+            # label (right-aligned inside sidebar)
+            label = f"{depth}" if depth < 1000 else f"{depth/10:.1f}cm"
+            tx = w - int(sidebar_w * 0.08)
+            ty = y - font_size // 2
+            # text shadow for contrast
+            draw.text((tx - 1, ty + 1), label, font=font, fill=(0, 0, 0, 180), anchor="rm")
+            draw.text((tx, ty), label, font=font, fill=(255, 255, 255, 230), anchor="rm")
+        else:
+            # minor tick
+            draw.line([(tick_x, y), (tick_x + tick_minor_len, y)], fill=(220, 220, 220, 160), width=1)
+
+    # Depth range label at top-left of sidebar
+    try:
+        depth_label = f"0 - {int(round(display_depth_mm))} mm"
+        draw.text((bg_x0 + 6, 6), depth_label, font=font, fill=(200, 200, 200, 220))
+    except Exception:
+        pass
+
+    # Composite and return RGB uint8 numpy
+    composed = Image.alpha_composite(img, overlay).convert("RGB")
+    return np.array(composed, dtype=np.uint8)
 
 
 

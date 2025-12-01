@@ -1125,7 +1125,7 @@ def _launch_desktop():
     """
     global _WEBVIEW_WINDOW
 
-    url = "http://127.0.0.1:5000"
+    url = "http://127.0.0.1:5001"
     if _HAS_WEBVIEW:
         _WEBVIEW_WINDOW = webview.create_window(
             title=_UI_TITLE,
@@ -1167,7 +1167,7 @@ if __name__ == "__main__":
     from threading import Thread
 
     def _run_flask():
-        app.run(host="127.0.0.1", port=5000, debug=True, use_reloader=False)
+        app.run(host="127.0.0.1", port=5001, debug=True, use_reloader=False)
 
     Thread(target=_run_flask, daemon=True).start()
     _launch_desktop()
