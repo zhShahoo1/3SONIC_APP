@@ -32,25 +32,32 @@ These defaults are defined in `app/config.py` and injected to the browser in `te
 
 - Linear feed / scan speeds:
   - `UI_LINEAR_FEED_MM_PER_MIN` default: 360.0 (UI hold-to-move linear feed)
-  - Equivalent: 6.0 mm/s (360.0 ÷ 60)
+    - Equivalent: 6.0 mm/s (360.0 ÷ 60)
   - `UI_ROTATION_FEED_MM_PER_MIN` default: 80.0 (UI rotation feed)
-  - Equivalent: 1.33 mm/s (80.0 ÷ 60)
+    - Equivalent: 1.33 mm/s (80.0 ÷ 60)
   - `JOG_FEED_MM_PER_MIN` default: 2400.0 (used by `deltaMove()` and some jog helpers)
-  - Equivalent: 40.0 mm/s (2400.0 ÷ 60)
+    - Equivalent: 40.0 mm/s (2400.0 ÷ 60)
   - `SCAN_SPEED_MM_PER_MIN` default: 180.0 (legacy default for scanning when not computed)
-  - Equivalent: 3.0 mm/s (180.0 ÷ 60)
+    - Equivalent: 3.0 mm/s (180.0 ÷ 60)
   - `FAST_FEED_MM_PER_MIN` default: 1200.0 (alias; used for faster positioning)
-  - Equivalent: 20.0 mm/s (1200.0 ÷ 60)
+    - Equivalent: 20.0 mm/s (1200.0 ÷ 60)
 
 - Continuous tick / cadence:
   - `UI_DEFAULT_TICK_S` default: 0.02 (server-side default tick for UI continuous moves)
   - keyboard worker `STEP_INTERVAL_S` default: 0.015 (keyboard per-tick sleep)
   - keyboard per-tick increment `STEP_CONTINUOUS_MM` default: 0.10 mm
 
+- UI maximum allowed feed:
+  - `UI_MAX_FEED_MM_PER_MIN` default: 5000.0
+    - Equivalent: 83.33 mm/s (5000.0 ÷ 60)
+
 - Rotation / E-axis:
   - `E_AXIS_DEFAULT_STEP` default: 0.15 mm (default step for rotate keys)
   - `ELEV_RESOLUTION_MM` default: 0.06 mm (e_r — elevation resolution; used to compute scan feed when `SCAN_FEED_FROM_ER_FPS` is enabled)
   - E-axis persistent file: `app/data/e_axis_position.txt` (the code writes `data/e_axis_position.txt`, check `app/core/scanner_control.py` `_E_AXIS_POS_FILE`)
+  - Travel speed / recorder legacy:
+    - `TRAVEL_SPEED_X_MM_PER_S` default: 0.5 mm/s (legacy recorder helper)
+    - File: `app/config.py`
 
 - Safety / click limits (introduced to prevent accidental large moves):
   - `UI_MAX_CLICK_STEP_MM` default: 20.0 mm — server will clamp single-click `step` values to this maximum in `app/main.py` `move_probe()`.

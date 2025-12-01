@@ -81,6 +81,11 @@ Each entry includes the symbol name and the file where it is defined so develope
   - File: `app/config.py`
   - Equivalent: 50.0 mm/s (3000 ÷ 60)
 
+- Travel speed (recorder legacy; mm/s)
+  - Value: 0.5 mm/s (legacy `TRAVEL_SPEED_X` default)
+  - Symbol: `Config.TRAVEL_SPEED_X_MM_PER_S`
+  - File: `app/config.py`
+
 - Safety: maximum single-click GUI step (server clamp)
   - Value: 20.0 mm
   - Symbol: `Config.UI_MAX_CLICK_STEP_MM`
