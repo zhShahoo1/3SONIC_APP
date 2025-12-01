@@ -475,3 +475,81 @@ input[type="number"]:focus, select:focus{
 
 /* --------------------------- Animations ---------------------------------- */
 @keyframes spin { to { transform: rotate(360deg); } }
+
+/* ------------------------------------------------------------------------
+   Optional Modern Medical Dark Theme (enable by adding `modern-theme` to
+   the `<body>` element). Inspired by provided variables — keeps original
+   tokens and only overrides a small set of colors and control styles.
+   ------------------------------------------------------------------------ */
+.modern-theme{
+  /* Use OKLCH variables provided in your snippet (modern browsers support)
+     Fallback to sensible values when not supported. These are lightweight
+     overrides; the rest of the stylesheet uses the same variables.
+  */
+  --background: oklch(0.12 0 0);
+  --foreground: oklch(0.92 0 0);
+  --card: oklch(0.18 0 0);
+  --card-foreground: oklch(0.9 0 0);
+  --primary: oklch(0.55 0.18 199);
+  --primary-foreground: oklch(1 0 0);
+  --accent: oklch(0.6 0.2 199);
+  --muted: oklch(0.28 0.005 0);
+  --border: oklch(0.25 0.003 0);
+
+  /* Map into the theme tokens used throughout this file */
+  --bg-dark: var(--background);
+  --bg-card: var(--card);
+  --bg-header: color-mix(in oklab, var(--background) 70%, black 10%);
+  --text: var(--foreground);
+  --nordic-frost: var(--primary);
+  --arctic-dawn: color-mix(in oklab, var(--primary) 70%, black 18%);
+  --glass-border: color-mix(in oklab, var(--border) 70%, black 10%);
+
+  /* subtle ring derived from primary */
+  --focus: 0 0 0 3px color-mix(in oklab, var(--primary) 25%, black 65% / 0.25);
+}
+
+/* D-Pad tweaks to match the modern rounded UI in the screenshot */
+.modern-theme .dpad{ max-width: 300px; }
+.modern-theme .dpad-up,
+.modern-theme .dpad-left,
+.modern-theme .dpad-right,
+.modern-theme .dpad-down{
+  width: 56px; height: 56px;
+  border-radius: 12px;
+  background: linear-gradient(180deg, color-mix(in oklab, var(--primary) 12%, black 80%), color-mix(in oklab, var(--bg-card) 40%, black 10%));
+  border: 1px solid color-mix(in oklab, var(--border) 60%, black 10%);
+  box-shadow: 0 6px 18px rgba(3,6,12,0.45), inset 0 1px 0 rgba(255,255,255,0.03);
+}
+.modern-theme .dpad-up:hover,
+.modern-theme .dpad-left:hover,
+.modern-theme .dpad-right:hover,
+.modern-theme .dpad-down:hover{
+  transform: translateY(-3px);
+  box-shadow: 0 10px 30px rgba(3,6,12,0.6);
+}
+
+/* Central 'Water bath' button style */
+.modern-theme .dpad-center{
+  background: linear-gradient(180deg, var(--primary), color-mix(in oklab, var(--primary) 85%, black 10%));
+  color: var(--primary-foreground);
+  padding: 10px 12px; border-radius: 12px; min-width: 96px;
+  font-weight: 600; box-shadow: 0 12px 30px color-mix(in oklab, var(--primary) 55%, black 60% / 0.35);
+  border: 1px solid color-mix(in oklab, var(--primary) 65%, black 10%);
+}
+.modern-theme .dpad-center:active{ transform: translateY(0); }
+
+/* Make primary buttons pop when theme enabled */
+.modern-theme .button{ border-color: color-mix(in oklab, var(--border) 60%, black 10%); }
+.modern-theme .start-scan-button, .modern-theme .multi-path-button{
+  background: linear-gradient(180deg, var(--primary), color-mix(in oklab, var(--primary) 85%, black 12%));
+  border-color: color-mix(in oklab, var(--primary) 60%, black 10%);
+}
+
+/* Accessibility: make focus ring respect theme */
+.modern-theme :where(button, .button, .icon-button, select, input):focus-visible{
+  box-shadow: var(--focus);
+}
+
+/* small helper: invert the stream overlay for improved contrast */
+.modern-theme .status-card{ background: color-mix(in oklab, var(--bg-card) 70%, black 10%); border-color: color-mix(in oklab, var(--border) 60%, black 8%); }
