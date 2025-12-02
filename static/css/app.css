@@ -27,25 +27,25 @@ body {
 /* --------------------------- Theme Tokens --------------------------------- */
 :root {
   /* Color palette: Dark background with turquoise accents */
-    --bg-dark: #0f1419;
-    --bg-card: #0f1419;
-    --bg-header: #0f1419;
+    --bg-dark: #121212;
+    --bg-card: #121212;
+    --bg-header: #121212;
 
   --text: #e5e9f0;
   --text-dim: #d8dee9;
   --text-inv: #0e1116;
 
-  /* Turquoise accent - primary color for buttons and highlights */
-  --accent-turquoise: #20d9d9;
-  --accent-dark: #0d8a8a;
+  /* Accent color (updated) - primary color for buttons and highlights */
+  --accent-turquoise: #008d99; /* new light button color */
+  --accent-dark: #006e73; /* darker variant for active states */
 
   /* Slate/navy for d-pad and secondary buttons */
-  --slate-dark: #2a3d4d;
+  --slate-dark: #2a3445;
   --slate-light: #3d5566;
-  --slate-border: rgba(32, 217, 217, 0.3);
+  --slate-border: rgba(0, 141, 153, 0.3);
 
-  --border: rgba(32, 217, 217, 0.15);
-  --glass-border: rgba(32, 217, 217, 0.2);
+  --border: rgba(0, 141, 153, 0.15);
+  --glass-border: rgba(0, 141, 153, 0.2);
 
   --radius: 12px;
   --radius-sm: 8px;
@@ -136,7 +136,7 @@ footer {
 footer p {
   color: var(--text-dim);
   margin: 0;
-    background: #0f1419; /* unify app background to header color */
+    background: var(--bg-dark); /* unify app background to header color */
   }
 
 /* ----------------------------- Cards ------------------------------------- */
@@ -233,7 +233,7 @@ footer p {
   background: var(--slate-light);
   border-color: var(--accent-turquoise);
   transform: translateY(-2px);
-  box-shadow: 0 6px 16px rgba(32, 217, 217, 0.2);
+  box-shadow: 0 6px 16px rgba(0, 141, 153, 0.2);
 }
 
 .button:active {
@@ -255,9 +255,9 @@ footer p {
 }
 
 .btn-primary:hover {
-  background: #26e5e5;
-  border-color: #26e5e5;
-  box-shadow: 0 6px 20px rgba(32, 217, 217, 0.3);
+  background: #00aeb7;
+  border-color: #00aeb7;
+  box-shadow: 0 6px 20px rgba(0, 141, 153, 0.3);
 }
 
 .btn-primary:active {
@@ -332,13 +332,11 @@ footer p {
 /* ---- D-Pad styling ---- */
 .dpad {
   display: grid;
-  grid-template-columns: 60px 1fr 60px;
-  grid-template-rows: 50px 60px 50px;
-  gap: 8px;
-  align-items: center;
-  justify-items: center;
-  max-width: 260px;
-  margin: 0.5rem auto 1rem;
+    grid-template-columns: 72px 1fr 72px; /* increased cell size to provide a larger hit area for buttons */
+    grid-template-rows: 60px 76px 60px;
+    gap: 10px;
+    max-width: 320px;
+    margin: 0.6rem auto 1rem;
 }
 .dpad-btn {
   background: var(--slate-dark);
@@ -354,7 +352,7 @@ footer p {
 }
 
 .dpad-btn i {
-  font-size: 1.2rem;
+  font-size: 2.0rem; /* increased for better visibility */
 }
 
 .dpad-btn:hover {
@@ -385,8 +383,10 @@ footer p {
 
 /* Active moving state */
 .active-moving {
+  padding: 0.25rem; /* small inner padding to increase tap target without changing layout */
   box-shadow: 0 0 12px rgba(32, 217, 217, 0.4) !important;
-  transform: translateY(-1px);
+  font-size: 1.8rem; /* larger for improved visibility */
+  line-height: 1; /* ensure consistent centering */
 }
 
 body.motion-active .button {
@@ -552,15 +552,15 @@ select:focus {
   display: none;
 }
 
-.status-card {
+  .status-card {
   min-width: 280px;
   max-width: 460px;
   padding: 16px 18px;
   border-radius: 14px;
-  background: #0f1419; /* match header background */
+  background: var(--bg-card); /* match header background */
   color: #e6e8eb;
   text-align: center;
-  border: 1px solid rgba(32, 217, 217, 0.2);
+  border: 1px solid rgba(0, 141, 153, 0.2);
   box-shadow: 0 10px 32px rgba(0, 0, 0, 0.6), inset 0 1px 0 rgba(255, 255, 255, 0.04);
   font-family: var(--font-ui);
 }
@@ -679,10 +679,13 @@ select:focus {
     grid-template-columns: 1fr;
   }
   .dpad {
-    grid-template-columns: 56px 1fr 56px;
-    grid-template-rows: 48px 56px 48px;
+    grid-template-columns: 64px 1fr 64px;
+    grid-template-rows: 56px 68px 56px;
     gap: 8px;
     max-width: 300px;
+  }
+  .dpad-btn i {
+    font-size: 1.6rem;
   }
   .z-btn {
     height: 44px;
