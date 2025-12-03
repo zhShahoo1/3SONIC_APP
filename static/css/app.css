@@ -698,3 +698,43 @@ select:focus {
     transform: rotate(360deg);
   }
 }
+
+/* ---- Axis display (minimal, modern) ---- */
+.axis-display {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(56px, 1fr));
+  gap: 10px;
+  align-items: center;
+  margin-top: 0.6rem;
+}
+.axis-item {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  padding: 8px 10px;
+  border-radius: 10px;
+  background: linear-gradient(180deg, rgba(255,255,255,0.02), rgba(255,255,255,0.01));
+  border: 1px solid rgba(32,217,217,0.06);
+  min-width: 56px;
+}
+.axis-item .axis-label {
+  font-size: 0.78rem;
+  color: var(--text-dim);
+  margin-bottom: 2px;
+}
+.axis-item .axis-value {
+  font-size: 1.05rem;
+  font-weight: 600;
+  color: var(--text);
+}
+.axis-item .axis-unit {
+  font-size: 0.68rem;
+  color: var(--text-dim);
+  margin-top: 2px;
+}
+.axis-item.axis-e { opacity: 0.95; }
+
+@media (max-width: 900px) {
+  .axis-display { grid-template-columns: repeat(2, 1fr); }
+}

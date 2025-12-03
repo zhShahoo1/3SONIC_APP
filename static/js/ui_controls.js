@@ -34,7 +34,8 @@
 
   function attach(){
     const buttons = document.querySelectorAll('[data-action]');
-    const distance = document.getElementById('distance');
+    // Step dropdown removed: do not query DOM for `#distance` anymore.
+    const distance = null;
     // Only handle XYZ/Z movement here; rotation buttons are handled by `app.js`.
     const movementActions = new Set(['x-plus','x-minus','y-plus','y-minus','z-plus','z-minus']);
     let movementButtons = Array.from(buttons).filter(b=> movementActions.has(b.getAttribute('data-action')) );
@@ -95,7 +96,8 @@
         if(lastHoldStart && (performance.now() - lastHoldStart) > HOLD_THRESHOLD) return;
         // also ignore if server reports motion active
         if(document.body.classList.contains('motion-active')) return;
-        const step = distance ? parseFloat(distance.value || distance.options[distance.selectedIndex].value) : 1;
+        // Use global default E-axis step instead of dropdown value
+        const step = (window.__E_AXIS_DEFAULT_STEP != null) ? parseFloat(window.__E_AXIS_DEFAULT_STEP) : 1;
         // For rotation buttons, explicitly send a single-step rotate via singleStep
         singleStep(action, step).catch(()=>{});
       };

@@ -536,8 +536,10 @@ def _stop_ui_continuous_move(action: str | None = None):
 def move_probe():
     data = request.get_json(silent=True) or {}
     direction = data.get("direction")
+    # Step-size dropdown removed from frontend. Use configured default E-axis step
+    # instead of trusting a client-supplied value.
     try:
-        step = float(data.get("step", 1))
+        step = float(getattr(Config, "E_AXIS_DEFAULT_STEP", 1.0))
     except Exception:
         step = 1.0
 
@@ -661,6 +663,47 @@ def move_probe_status():
             else:
                 out.append({"key": str(k), "direction": str(k[0] if isinstance(k, (list, tuple)) and k else k)})
     return jsonify(success=True, active=out)
+
+
+@app.route("/api/position", methods=["GET"])
+def api_position():
+    """Return current axis positions as JSON: { x, y, z, e }
+
+    Uses `pssc.get_position_axis()` if available, otherwise falls back to
+    returning nulls so the frontend can display placeholders.
+    """
+    out = {"x": None, "y": None, "z": None, "e": None}
+    try:
+        # Try per-axis getters first
+        try:
+            x = pssc.get_position_axis("X")
+            y = pssc.get_position_axis("Y")
+            z = pssc.get_position_axis("Z")
+            out["x"] = None if x is None else float(x)
+            out["y"] = None if y is None else float(y)
+            out["z"] = None if z is None else float(z)
+        except Exception:
+            # Fallback: try a combined position call if present
+            try:
+                pos = pssc.get_position()
+                if isinstance(pos, (list, tuple)) and len(pos) >= 3:
+                    out["x"] = float(pos[0])
+                    out["y"] = float(pos[1])
+                    out["z"] = float(pos[2])
+            except Exception:
+                pass
+
+        # Extruder/E axis: best-effort read
+        try:
+            e = pssc.get_position_axis("E")
+            out["e"] = None if e is None else float(e)
+        except Exception:
+            # If no E axis, leave None
+            out["e"] = None
+    except Exception:
+        # On any error, gracefully return what we have (placeholders)
+        pass
+    return jsonify(success=True, **out)
 
 
 @app.route("/initscanner")

@@ -43,7 +43,7 @@
   };
 
   const SELECTORS = {
-    stepSelect: "#distance",
+    // stepSelect removed: UI no longer exposes distance dropdown
     ultrasoundImg: "#im1",
     webcamImg: "#im2",
     buttons: "[data-action]",
@@ -96,8 +96,8 @@
   // ------------------------------ State ------------------------------------
   const state = {
     get step() {
-      const el = $(SELECTORS.stepSelect);
-      const v = parseFloat(el?.value || "1");
+      // Step dropdown removed: rely on global default (injected by template)
+      const v = parseFloat(window.__E_AXIS_DEFAULT_STEP || "1");
       return Number.isFinite(v) ? v : 1;
     },
     insertBathStage: 0, // 0 = Insert Bath -> lower; 1 = Raise Plate to Scan -> position
@@ -527,13 +527,7 @@
       ["r", () => rotateCW(state.step)],
       ["f", () => rotateCCW(state.step)],
 
-      ["1", () => setStep(0.1)],
-      ["2", () => setStep(1)],
-      ["3", () => setStep(3)],
-      ["4", () => setStep(5)],
-      ["5", () => setStep(10)],
-      ["[", () => cycleStep(-1)],
-      ["]", () => cycleStep(+1)],
+      // Step keyboard shortcuts removed (dropdown no longer available)
 
       // quick actions
       // ["Enter", () => startScan(null, { prompt: false })],
@@ -548,17 +542,13 @@
   }
 
   function setStep(val) {
-    const el = $(SELECTORS.stepSelect);
-    if (el) el.value = String(val);
-    console.log("[step] set to", val, "mm");
+    // Disabled: step dropdown has been removed
+    console.log("[step] set requested (ignored) ->", val, "mm");
   }
 
   function cycleStep(direction = +1) {
-    const steps = ["0.1", "0.5", "1", "3", "5", "10"];
-    const el = $(SELECTORS.stepSelect); if (!el) return;
-    const idx = steps.indexOf(el.value);
-    const next = Math.min(steps.length - 1, Math.max(0, idx + direction));
-    el.value = steps[next]; el.dispatchEvent(new Event("change"));
+    // Disabled: dropdown removed
+    console.log("[step] cycle requested (ignored)");
   }
 
   // ----------------------------- Streams -----------------------------------
@@ -774,17 +764,63 @@
     // default visible
     showUltrasound();
 
-    // safety cue for big steps
-    const stepEl = $(SELECTORS.stepSelect);
-    if (stepEl) {
-      const apply = () => stepEl.classList.toggle("danger-step", parseFloat(stepEl.value || "1") >= 5);
-      stepEl.addEventListener("change", apply); apply();
-    }
+    // Start axis position polling and update the display
+    try { startPositionPoll(); } catch (e) { console.error('[position] poll start failed', e); }
 
     
   }
 
   document.addEventListener("DOMContentLoaded", init);
+
+  // ------------------------- Position Polling -------------------------------
+  // Fetch /api/position and update the small axis display added to the UI.
+  async function fetchPosition() {
+    try {
+      const res = await fetch('/api/position');
+      if (!res.ok) throw new Error('status ' + res.status);
+      const j = await res.json();
+      return j;
+    } catch (e) {
+      return null;
+    }
+  }
+
+  function updateAxisDisplay(pos) {
+    if (!pos) return;
+    const set = (id, v) => {
+      const el = document.getElementById(id);
+      if (!el) return;
+      // Show placeholder when value is missing
+      if (v == null) {
+        el.textContent = '—';
+        return;
+      }
+      const n = Number(v);
+      if (Number.isFinite(n)) {
+        // One decimal place for readability; 0 => "0.0"
+        el.textContent = n.toFixed(1);
+      } else {
+        el.textContent = String(v);
+      }
+    };
+    set('axis-x', pos.x);
+    set('axis-y', pos.y);
+    set('axis-z', pos.z);
+    set('axis-e', pos.e ?? pos.extruder ?? '—');
+  }
+
+  let _posPollTimer = null;
+  function startPositionPoll(interval = 600) {
+    // Avoid multiple timers
+    if (_posPollTimer) return;
+    (async function loop() {
+      while (true) {
+        const p = await fetchPosition();
+        if (p) updateAxisDisplay(p);
+        await new Promise(r => setTimeout(r, interval));
+      }
+    })();
+  }
 
   // ----------------------- Minimal Styles (spinner & modal) ------------------
   const style = document.createElement("style");
