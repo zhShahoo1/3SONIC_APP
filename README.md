@@ -70,7 +70,7 @@ Use the header toggle buttons to switch; the active button and title update acco
 
 ### Jogging & Rotation
 
-* Step size **select** (`0.1` → `10 mm`) with a safety highlight for large steps.
+* Minimal axis readout (replaces the old step-size select). The UI now shows live X/Y/Z/E values in the header area. Single-click rotates/moves use server-configured E-axis defaults (see `app/config.py::Config.E_AXIS_DEFAULT_STEP`) and the backend clamps large single-click steps for safety.
 * Directional buttons (X/Y/Z) and rotation CW/CCW (E axis).
 * **Keyboard shortcuts** (frontend jogs are debounced to avoid flooding):
 
@@ -256,6 +256,9 @@ If you supply `app/core/keyboard_control.py` (optional), the app will best-effor
 
   * `POST /move_probe` — `{direction, step}` where direction ∈
     `Xplus|Xminus|Yplus|Yminus|Zplus|Zminus|rotateClockwise|rotateCounterclockwise`
+  * `GET /api/position` — returns `{x, y, z, e}` (best-effort floats or nulls); frontend polls this to populate the readout.
+  * `GET|POST /scanpath` — now accepts `POST` with JSON body (ranges/params) in addition to existing `GET` query usage.
+  * `POST /multisweep` — legacy clients POSTing to `/multisweep` are accepted; this endpoint forwards to the canonical `/multipath` handler for compatibility.
 
 * **Workflow**
 
@@ -303,6 +306,19 @@ templates/
 scripts/
   record.py                      # Recorder invoked by scans (multi arg 0/1)
 postprocessing.py                # Example_slices.png + NIfTI + times + viewer
+Other top-level folders introduced by recent refactors:
+
+```
+src/                              # bundled native resources (DLL, DICOM templates)
+  usgfw2wrapper.dll
+  dcmimage.dcm
+
+run/                              # ephemeral runtime state (ignored by git)
+  scanning
+  multisweep
+  recdir
+  scanplan.json
+```
 
 ---
 

@@ -37,7 +37,13 @@ project-root/
 │   │
 │   └── main.py                    # flask entrypoint (routes, ui)
 │
-├── usgfw2wrapper.dll              # ultrasound driver dll
-├── dcmimage.dcm                   # dicom template
+├── src/                           # bundled native resources
+│   ├── usgfw2wrapper.dll
+│   └── dcmimage.dcm
+├── run/                           # runtime state (ignored by git)
+│   ├── scanning
+│   ├── multisweep
+│   ├── recdir
+│   └── scanplan.json
 ├── requirements.txt               # pinned dependencies
 └── README.md                      # project documentation
