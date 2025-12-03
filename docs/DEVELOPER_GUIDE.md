@@ -80,6 +80,70 @@ Note: the repository recently colocated ephemeral runtime flags under a `run/` d
 
 - Low-level motion primitive: `deltaMove(delta, axis)` in `app/core/scanner_control.py` performs the relative `G1` step under `G91`; `jog_once()` maps directions to `deltaMove()` or rotation helpers.
 
+GUI Colors
+----------
+The app uses a small set of CSS variables and a few well-named classes so developers can quickly tweak the look-and-feel without hunting through the stylesheet.
+
+- Location: `static/css/app.css` — the theme tokens live at the top inside the `:root { ... }` block.
+- Key CSS variables you may want to edit:
+  - `--bg-dark`, `--bg-card`, `--bg-header` : background surfaces
+  - `--text`, `--text-dim` : primary and secondary text
+  - `--accent-turquoise`, `--accent-dark` : primary accent (used by `.btn-primary`, headings)
+  - `--slate-dark`, `--slate-light`, `--slate-border` : secondary button/panel colors
+  - `--border`, `--glass-border`, `--focus` : borders and focus rings
+
+- Important classes (for targeted overrides):
+  - `.btn-primary` — primary action buttons (uses `--accent-turquoise`)
+  - `.button`, `.icon-button` — default buttons and header toggles
+  - `.card`, `.card-header` — panel background and header accent color
+  - `.axis-display`, `.axis-item` — small axis readout added to the UI
+
+Quick example — change the accent to a warm orange:
+1. Open `static/css/app.css`.
+2. Edit the variables at top:
+   - `--accent-turquoise: #ff7a33;`
+   - `--accent-dark: #e65b00;`
+3. Save and reload the app; primary buttons and headers will pick up the new accent.
+
+Tip: prefer editing the few `:root` variables rather than scattering color overrides across the file. If you want a full light theme, create a second stylesheet (e.g. `app.light.css`) and swap it in the template based on an env/config flag.
+
+Color variables (values)
+-----------------------
+Below are the primary color tokens defined in `static/css/app.css` and the places they are commonly used. Edit the `:root` block in `app.css` to adjust these.
+
+```
+--bg-dark: #121212       ; /* App background */
+--bg-card: #121212       ; /* Card/panel backgrounds */
+--bg-header: #121212     ; /* Header/footer background */
+
+--text: #e5e9f0         ; /* Primary text */
+--text-dim: #d8dee9     ; /* Secondary/dim text */
+--text-inv: #0e1116     ; /* Inverse text for light buttons */
+
+--accent-turquoise: #008d99 ; /* Primary accent (buttons, highlights) */
+--accent-dark: #006e73      ; /* Darker accent for active states */
+
+--slate-dark: #2a3445    ; /* Secondary button / panels */
+--slate-light: #3d5566   ; /* Hover / lighter slate */
+
+--slate-border: rgba(0,141,153,0.3) ; /* subtle slate border */
+--border: rgba(0,141,153,0.15)      ; /* thin borders */
+--glass-border: rgba(0,141,153,0.2) ; /* glass card border */
+
+--focus: 0 0 0 3px rgba(32,217,217,0.4) ; /* focus ring */
+
+/* Additional used colors (examples / hover states) */
+#20d9d9     ; /* spinner / bright turquoise used in overlays */
+#00aeb7     ; /* primary button hover */
+#26e5e5     ; /* special button hover */
+#c44545     ; /* exit button / danger hover */
+```
+
+Usage notes:
+- Change tokens in `:root` to affect the whole app consistently.
+- For temporary experiments, override a single token in your browser devtools to preview changes before committing.
+- If you add a second theme (light/dark), keep tokens mirrored and swap the stylesheet in the template.
+
 How to safely change speeds (recommended workflow)
 -----------------------------------------------
 1. Edit `app/config.py` or set the environment variable (preferred to avoid committing config changes):
