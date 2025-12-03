@@ -737,11 +737,21 @@ def _parse_scan_query() -> tuple[float, float, str]:
     xmax = float(getattr(Config, "X_MAX", 118.0))
     mode = (request.args.get("mode") or "").strip().lower()
 
+    # If the client POSTs JSON, accept values there too (body keys: start,end or x0,x1)
+    _posted = request.get_json(silent=True) or {}
+
     def _f(name: str) -> Optional[float]:
+        # 1) try querystring (GET)
         v = request.args.get(name, default=None, type=float)
-        if v is None:
-            return None
-        return max(0.0, min(xmax, v))
+        if v is not None:
+            return max(0.0, min(xmax, v))
+        # 2) try posted JSON body
+        try:
+            if isinstance(_posted, dict) and name in _posted and _posted[name] is not None:
+                return max(0.0, min(xmax, float(_posted[name])))
+        except Exception:
+            pass
+        return None
 
     s = _f("start")
     e = _f("end")
@@ -850,7 +860,7 @@ def _start_scan(multi: bool, start_x: float | None = None, end_x: float | None =
     newest = _newest_data_folder_name()
     return render_template("scanning.html", link2files=str(Config.DATA_DIR / newest), linkshort=newest)
 
-@app.route("/scanpath", methods=["GET"])
+@app.route("/scanpath", methods=["GET", "POST"])
 def scanpath():
     x0, x1, _mode = _parse_scan_query()
     return _start_scan(multi=False, start_x=x0, end_x=x1)
@@ -952,6 +962,13 @@ def multipath():
         link2files=str(Config.DATA_DIR / folder),
         linkshort=folder,
     )
+
+
+# Back-compat alias: some clients may POST to /multisweep — forward to /multipath
+@app.route("/multisweep", methods=["GET", "POST"])
+def multisweep_alias():
+    # Simply call the multipath handler to keep a single implementation.
+    return multipath()
 
 
 # Legacy hook (button now opens a picker, but keep this endpoint harmless)
