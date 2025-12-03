@@ -131,11 +131,19 @@ class Config:
     for _p in (DATA_DIR, LOGS_DIR):
         _p.mkdir(parents=True, exist_ok=True)
 
-    # Tiny flag files used by your flow (live at repo root / EXE folder)
-    SCANNING_FLAG_FILE: Path = (BASE_DIR / "scanning").resolve()
-    MULTISWEEP_FLAG_FILE: Path = (BASE_DIR / "multisweep").resolve()
-    RECDIR_FILE: Path = (BASE_DIR / "recdir").resolve()
-    SCANPLAN_FILE: Path = (BASE_DIR / "scanplan.json").resolve()
+    # Runtime/state directory for flag files and ephemeral runtime artifacts.
+    # Keep this separate from source so these files can be ignored by VCS.
+    STATE_DIR: Path = (BASE_DIR / "run").resolve()
+    try:
+        STATE_DIR.mkdir(parents=True, exist_ok=True)
+    except Exception:
+        pass
+
+    # Tiny flag files used by your flow (live under `run/`)
+    SCANNING_FLAG_FILE: Path = (STATE_DIR / "scanning").resolve()
+    MULTISWEEP_FLAG_FILE: Path = (STATE_DIR / "multisweep").resolve()
+    RECDIR_FILE: Path = (STATE_DIR / "recdir").resolve()
+    SCANPLAN_FILE: Path = (STATE_DIR / "scanplan.json").resolve()
 
     # Python interpreter to spawn helper scripts (record/imconv/etc.)
     PYTHON_EXE: str = os.environ.get("PYTHON_EXE", sys.executable)

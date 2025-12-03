@@ -24,3 +24,9 @@ build/
 *.sublime-project
 .venv/
 data/
+
+# Runtime state files (created at runtime; should not be committed)
+/run/
+/scanning
+/recdir
+/multisweep

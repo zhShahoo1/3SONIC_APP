@@ -303,6 +303,20 @@ templates/
 scripts/
   record.py                      # Recorder invoked by scans (multi arg 0/1)
 postprocessing.py                # Example_slices.png + NIfTI + times + viewer
+
+---
+
+## Runtime / State files
+
+The app uses a small `run/` directory at the project root to hold ephemeral
+runtime state such as marker files and the active `scanplan.json` that the
+recorder reads. These files are created and updated at runtime and are
+ignored by Git by default. See `app/config.py::Config` for the exact paths
+(`Config.STATE_DIR`, `Config.SCANPLAN_FILE`, etc.).
+
+Do not commit changing values from `run/` — keep only templates/config
+defaults under the project root (e.g., sample `scanplan.json` or docs).
+
 ```
 
 ---
