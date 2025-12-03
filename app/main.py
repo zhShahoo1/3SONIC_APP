@@ -1294,19 +1294,86 @@ def _launch_desktop():
 
     url = "http://127.0.0.1:5001"
     if _HAS_WEBVIEW:
-        # Create a fullscreen native window on the display where the app
-        # is opened. `fullscreen=True` asks pywebview to open maximized on
-        # the host display; keep resizable/min_size for non-fullscreen fallbacks.
-        _WEBVIEW_WINDOW = webview.create_window(
-            title=_UI_TITLE,
-            url=url,
-            width=380,
-            height=680,
-            resizable=True,
-            min_size=(400, 950),
-        )
+        # Create a frameless native window so the app can provide custom
+        # (hideable) window controls inside the HTML header. If frameless
+        # windows are unsupported, fall back to a regular window.
+        class _WindowApi:
+            def minimize(self):
+                try:
+                    if _WEBVIEW_WINDOW is not None:
+                        _WEBVIEW_WINDOW.minimize()
+                        return True
+                except Exception:
+                    pass
+                return False
 
-        # Optional: small Windows dark-titlebar tweak
+            def maximize(self):
+                try:
+                    if _WEBVIEW_WINDOW is not None:
+                        _WEBVIEW_WINDOW.maximize()
+                        return True
+                except Exception:
+                    pass
+                return False
+
+            def restore(self):
+                try:
+                    if _WEBVIEW_WINDOW is not None:
+                        _WEBVIEW_WINDOW.restore()
+                        return True
+                except Exception:
+                    pass
+                return False
+
+            def toggle_maximize(self):
+                try:
+                    if _WEBVIEW_WINDOW is not None:
+                        try:
+                            _WEBVIEW_WINDOW.toggle_fullscreen()
+                        except Exception:
+                            try:
+                                _WEBVIEW_WINDOW.maximize()
+                            except Exception:
+                                pass
+                        return True
+                except Exception:
+                    pass
+                return False
+
+            def close(self):
+                try:
+                    if _WEBVIEW_WINDOW is not None:
+                        _WEBVIEW_WINDOW.destroy()
+                        return True
+                except Exception:
+                    pass
+                return False
+
+        api = _WindowApi()
+        try:
+            _WEBVIEW_WINDOW = webview.create_window(
+                title=_UI_TITLE,
+                url=url,
+                width=980,
+                height=820,
+                resizable=True,
+                min_size=(760, 520),
+                frameless=True,
+                js_api=api,
+            )
+        except Exception as e:
+            print(f"[Desktop] frameless window failed ({e}); falling back to normal window")
+            _WEBVIEW_WINDOW = webview.create_window(
+                title=_UI_TITLE,
+                url=url,
+                width=980,
+                height=820,
+                resizable=True,
+                min_size=(400, 950),
+                js_api=api,
+            )
+
+        # Optional: small Windows dark-titlebar tweak (best-effort)
         if platform.system() == "Windows":
             try:
                 import ctypes
@@ -1314,7 +1381,7 @@ def _launch_desktop():
                 hwnd = ctypes.windll.user32.FindWindowW(None, _UI_TITLE)
                 if hwnd:
                     enabled = ctypes.c_int(1)
-                    for attr in (19, 20):  # DWMWA_USE_IMMERSIVE_DARK_MODE (varies by Windows)
+                    for attr in (19, 20):
                         ctypes.windll.dwmapi.DwmSetWindowAttribute(
                             ctypes.c_void_p(hwnd),
                             ctypes.c_uint(attr),
@@ -1324,14 +1391,10 @@ def _launch_desktop():
             except Exception:
                 pass
 
-        # Maximize on startup (keeps window movable/resizable so user can
-        # drag it to other monitors). Use a small startup callback so the
-        # window is created before we call maximize(). This avoids forcing
-        # an OS fullscreen mode which prevents moving between displays.
+        # Maximize on startup but keep it resizable/movable so the user can
+        # drag between monitors. Use a small callback after creation.
         def _on_webview_ready():
             try:
-                # Best-effort maximize; not all backends expose this but
-                # pywebview implements `maximize()` on common GUI backends.
                 if _WEBVIEW_WINDOW is not None:
                     try:
                         _WEBVIEW_WINDOW.maximize()

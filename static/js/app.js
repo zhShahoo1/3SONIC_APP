@@ -825,6 +825,7 @@
     bindKeyboard();
     bindInsertBath();
     bindUltrasoundAutoReload();
+    bindWindowControls();
 
     // default visible
     showUltrasound();
@@ -835,10 +836,57 @@
     // Start connection status badges and polling
     try { ensureConnectionBadges(); startConnectionPoll(); } catch (e) { console.error('[connections] init failed', e); }
 
+    // header auto-hide disabled (restored to previous behaviour)
+
     
   }
 
   document.addEventListener("DOMContentLoaded", init);
+
+  // ----------------------- Window Controls (desktop only) -----------------
+  function bindWindowControls() {
+    const container = document.getElementById('window-controls');
+    if (!container) return;
+    const toggleBtn = document.getElementById('wc-toggle');
+    const btns = document.getElementById('wc-buttons');
+    const minBtn = document.getElementById('win-minimize');
+    const maxBtn = document.getElementById('win-maximize');
+    const closeBtn = document.getElementById('win-close');
+
+    const STORAGE_KEY = 'windowControlsVisible_v1';
+    const readVisible = () => {
+      try { const v = localStorage.getItem(STORAGE_KEY); if (v === null) return true; return v === '1'; } catch { return true; }
+    };
+    const setVisible = (v) => {
+      try { if (!v) container.classList.add('hidden'); else container.classList.remove('hidden'); localStorage.setItem(STORAGE_KEY, v ? '1' : '0'); } catch { if (!v) container.classList.add('hidden'); else container.classList.remove('hidden'); }
+    };
+
+    // Initialize visibility
+    setVisible(readVisible());
+
+    toggleBtn?.addEventListener('click', (e) => {
+      try { const current = !container.classList.contains('hidden'); setVisible(!current); } catch (err) { console.error('[win-controls] toggle failed', err); }
+    });
+
+    function callApi(name) {
+      try {
+        if (window.pywebview && window.pywebview.api && typeof window.pywebview.api[name] === 'function') {
+          window.pywebview.api[name]();
+        } else {
+          // Fallbacks for non-desktop: try window controls
+          if (name === 'close') { try { window.close(); } catch {} }
+          if (name === 'minimize') { try { window.blur(); } catch {} }
+          if (name === 'maximize' || name === 'toggle_maximize') { try { window.focus(); } catch {} }
+        }
+      } catch (e) { console.error('[win-controls] api call failed', e); }
+    }
+
+    minBtn?.addEventListener('click', () => callApi('minimize'));
+    maxBtn?.addEventListener('click', () => callApi('toggle_maximize'));
+    closeBtn?.addEventListener('click', () => {
+      if (!confirm('Close the app?')) return; callApi('close');
+    });
+  }
 
   // ------------------------- Position Polling -------------------------------
   // Fetch /api/position and update the small axis display added to the UI.
@@ -912,4 +960,6 @@
     .modal{position:fixed;inset:0;background:rgba(0,0,0,.55);display:none;align-items:center;justify-content:center;z-index:9999}
   `;
   document.head.appendChild(style);
+
+  
 })();

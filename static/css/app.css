@@ -99,10 +99,13 @@ header {
   z-index: 10;
 }
 
+
+
 header .logo {
   height: 42px;
   object-fit: contain;
   filter: brightness(1.12) hue-rotate(5deg);
+  -webkit-app-region: no-drag;
 }
 
 nav ul {
@@ -183,6 +186,50 @@ footer p {
   gap: 0.6rem;
   align-items: center;
 }
+
+/* Dedicated drag handle sits between logo and status; keeps edges resizeable */
+.drag-handle {
+  flex: 1 1 auto;
+  height: 100%;
+  -webkit-app-region: drag;
+  cursor: move;
+}
+
+/* Custom window controls for frameless desktop: keep them non-draggable */
+.window-controls {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+.window-controls .wc-toggle {
+  background: transparent;
+  border: none;
+  color: var(--text-dim);
+  font-size: 0.92rem;
+  padding: 6px 8px;
+  cursor: pointer;
+  -webkit-app-region: no-drag;
+}
+.window-controls .wc-buttons {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+  -webkit-app-region: no-drag;
+}
+.wc-btn {
+  background: rgba(255,255,255,0.03);
+  border: 1px solid rgba(255,255,255,0.04);
+  color: var(--text);
+  padding: 6px 8px;
+  border-radius: 6px;
+  cursor: pointer;
+  font-size: 0.92rem;
+}
+.wc-btn.wc-close { background: #c94b4b; border-color: rgba(201,75,75,0.9); }
+.window-controls.hidden .wc-buttons { display: none; }
+
+/* Ensure interactive elements inside header are not draggable */
+.header-status, .header-status *, .display-controls, .display-controls *, .window-controls, .window-controls * { -webkit-app-region: no-drag; }
 .status-badge {
   display: inline-flex;
   align-items: center;

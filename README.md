@@ -177,7 +177,25 @@ All tunables live in `app/config.py::Config`. Important ones:
 python -m app.main
 ```
 
-This starts Flask on `http://127.0.0.1:5000` and opens a native window via **pywebview** (if installed). On Windows, a small tweak enables a dark titlebar.
+This starts Flask on `http://127.0.0.1:5001` and opens a native window via **pywebview** (if installed). The app now uses a frameless desktop window when pywebview supports it so the UI can provide custom, hideable window controls in the header.
+
+Behavior notes for Desktop mode:
+
+- If `pywebview` is installed and the current backend supports frameless windows, the app will open a frameless window and expose a small JS API that the frontend uses to minimize, maximize/restore, and close the native window.
+- The header includes a small toggle that shows/hides the custom window controls (minimize / maximize / close). The visibility preference is persisted in the app's `localStorage`.
+- To preserve standard OS resize behavior, only the central header area (a "drag handle") is draggable; the window edges remain non-draggable so the OS resize handles work normally. If you observe different behavior on a platform/backend (CEF/Edge/WinForms), see Troubleshooting below.
+- If frameless creation fails or `pywebview` is not installed, the app falls back to opening a normal browser window/tab or a standard framed pywebview window.
+
+Small checklist before using Desktop mode:
+
+- Install `pywebview` (already listed in `requirements.txt`) if you want the native shell integration.
+- On Windows, the app attempts a dark-titlebar tweak; this is best-effort and harmless if unsupported.
+
+Example:
+
+```bash
+python -m app.main
+```
 
 ### Browser fallback
 

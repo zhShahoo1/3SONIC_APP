@@ -15,6 +15,8 @@
 <body>
 <header>
   <img src="{{ url_for('static', filename='images/3SONICLogo.png') }}" alt="3SONIC Logo" class="logo" />
+  <!-- drag handle: center area is draggable in frameless mode; edges remain resizable -->
+  <div class="drag-handle" id="drag-handle" aria-hidden="true"></div>
   <!-- header status badges (serial / probe) -->
   <div class="header-status" id="header-status">
     <div class="status-badge status-serial" id="status-serial" title="Serial connection status">
@@ -24,6 +26,16 @@
     <div class="status-badge status-probe" id="status-probe" title="Ultrasound probe status">
       <span class="status-dot offline"></span>
       <span class="status-text">Probe</span>
+    </div>
+  </div>
+  
+  <!-- Custom window controls (shown when running in the desktop shell) -->
+  <div class="window-controls" id="window-controls">
+    <button class="wc-toggle" id="wc-toggle" title="Show/hide window controls">▤</button>
+    <div class="wc-buttons" id="wc-buttons">
+      <button class="wc-btn" id="win-minimize" title="Minimize">—</button>
+      <button class="wc-btn" id="win-maximize" title="Maximize">▢</button>
+      <button class="wc-btn wc-close" id="win-close" title="Close">✕</button>
     </div>
   </div>
 </header>
