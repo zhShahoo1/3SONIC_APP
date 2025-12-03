@@ -8,6 +8,7 @@
   <!-- Icons -->
   <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css"/>
   <link rel="stylesheet" href="{{ url_for('static', filename='css/app.css') }}">
+  <link rel="stylesheet" href="{{ url_for('static', filename='imaging/imaging.css') }}">
 
   <!-- Google Fonts: Montserrat Light -->
   <link href="https://fonts.googleapis.com/css2?family=Montserrat:wght@300&display=swap" rel="stylesheet">
@@ -18,7 +19,7 @@
   <!-- drag handle: center area is draggable in frameless mode; edges remain resizable -->
   <div class="drag-handle" id="drag-handle" aria-hidden="true"></div>
   <!-- header status badges (serial / probe) -->
-  <div class="header-status" id="header-status">
+  <div class="header-status" id="header-status" data-drag-cancel="true">
     <div class="status-badge status-serial" id="status-serial" title="Serial connection status">
       <span class="status-dot offline"></span>
       <span class="status-text">Serial</span>
@@ -30,7 +31,7 @@
   </div>
   
   <!-- Custom window controls (shown when running in the desktop shell) -->
-  <div class="window-controls" id="window-controls">
+  <div class="window-controls" id="window-controls" data-drag-cancel="true">
     <button class="wc-toggle" id="wc-toggle" title="Show/hide window controls">▤</button>
     <div class="wc-buttons" id="wc-buttons">
       <button class="wc-btn" id="win-minimize" title="Minimize">—</button>
@@ -173,26 +174,270 @@
 
   <!-- Right panel -->
   <section class="rendering-controls">
-    <h2>Rendering</h2>
-    <div class="adjustment-group">
-      <button class="button" data-action="open-itk"><i class="fas fa-external-link-alt"></i> Open in ITK-Snap</button>
-    </div>
-    <div class="adjustment-group">
-      <button class="button" data-action="overview"><i class="fas fa-camera"></i> Overview Image</button>
-    </div>
+    <div class="imaging-panel" data-imaging-panel>
+      <div class="imaging-tabs" role="tablist" aria-label="Imaging controls">
+        <button type="button" class="imaging-tab active" data-tab="imaging" role="tab" aria-selected="true">Imaging</button>
+        <button type="button" class="imaging-tab" data-tab="recording" role="tab" aria-selected="false">Recording</button>
+        <button type="button" class="imaging-tab" data-tab="measurements" role="tab" aria-selected="false">Measurements</button>
+      </div>
 
-    <div class="automatic-controls" style="margin-top:1.25rem">
-      <h2>Acquisition</h2>
-      <div style="font-size:.85rem; opacity:.85; line-height:1.4;">
-        <p style="margin:.35rem 0 0;">
-          <strong>Preset:</strong> <span id="ui-selected-preset">Long</span>
-        </p>
-        <p style="margin:.2rem 0 0;">
-          <strong>Range:</strong> <span id="ui-selected-range">X: 0 → {{ config.X_MAX|int if config else 118 }} mm</span>
-        </p>
-        <p style="margin:.2rem 0 0; opacity:.75;">
-          Values are applied when scan starts.
-        </p>
+      <div class="imaging-tab-panel active" data-panel="imaging" role="tabpanel">
+        <div class="imaging-panel-scroll" data-imaging-pages>
+          <div class="imaging-section" data-imaging-page="1">
+            <div class="imaging-control" data-control="focus">
+              <div class="imaging-control-header">
+                <span class="imaging-control-label">Focus</span>
+                <span class="imaging-control-value" data-value>7 - 20 mm</span>
+              </div>
+              <div class="imaging-control-actions">
+                <button type="button" class="imaging-arrow" data-dir="prev" aria-label="Decrease focus">&lt;</button>
+                <button type="button" class="imaging-arrow" data-dir="next" aria-label="Increase focus">&gt;</button>
+                <button type="button" class="imaging-dropdown-toggle" aria-haspopup="listbox">∨</button>
+              </div>
+            </div>
+
+            <div class="imaging-control" data-control="focusesNumber">
+              <div class="imaging-control-header">
+                <span class="imaging-control-label">Focuses Number</span>
+                <span class="imaging-control-value" data-value>3</span>
+              </div>
+              <div class="imaging-control-actions">
+                <button type="button" class="imaging-arrow" data-dir="prev" aria-label="Decrease focuses number">&lt;</button>
+                <button type="button" class="imaging-arrow" data-dir="next" aria-label="Increase focuses number">&gt;</button>
+                <button type="button" class="imaging-dropdown-toggle" aria-haspopup="listbox">∨</button>
+              </div>
+            </div>
+
+            <div class="imaging-control" data-control="focusSet">
+              <div class="imaging-control-header">
+                <span class="imaging-control-label">Focus Set</span>
+                <span class="imaging-control-value" data-value>1</span>
+              </div>
+              <div class="imaging-control-actions">
+                <button type="button" class="imaging-arrow" data-dir="prev" aria-label="Previous focus set">&lt;</button>
+                <button type="button" class="imaging-arrow" data-dir="next" aria-label="Next focus set">&gt;</button>
+                <button type="button" class="imaging-dropdown-toggle" aria-haspopup="listbox">∨</button>
+              </div>
+            </div>
+
+            <div class="imaging-control" data-control="depth">
+              <div class="imaging-control-header">
+                <span class="imaging-control-label">Depth</span>
+                <span class="imaging-control-value" data-value>40 mm</span>
+              </div>
+              <div class="imaging-control-actions">
+                <button type="button" class="imaging-arrow" data-dir="prev" aria-label="Decrease depth">&lt;</button>
+                <button type="button" class="imaging-arrow" data-dir="next" aria-label="Increase depth">&gt;</button>
+                <button type="button" class="imaging-dropdown-toggle" aria-haspopup="listbox">∨</button>
+              </div>
+            </div>
+
+            <div class="imaging-control" data-control="dynamicRange">
+              <div class="imaging-control-header">
+                <span class="imaging-control-label">Dynamic Range</span>
+                <span class="imaging-control-value" data-value>54 dB</span>
+              </div>
+              <div class="imaging-control-actions">
+                <button type="button" class="imaging-arrow" data-dir="prev" aria-label="Decrease dynamic range">&lt;</button>
+                <button type="button" class="imaging-arrow" data-dir="next" aria-label="Increase dynamic range">&gt;</button>
+                <button type="button" class="imaging-dropdown-toggle" aria-haspopup="listbox">∨</button>
+              </div>
+            </div>
+
+            <div class="imaging-slider" data-slider="power">
+              <div class="imaging-control-header">
+                <span class="imaging-control-label">Power</span>
+                <span class="imaging-control-value"><span data-slider-value>0</span> dB</span>
+              </div>
+              <input type="range" min="-10" max="20" step="1" value="0" aria-label="Power" />
+            </div>
+
+            <div class="imaging-slider" data-slider="gain">
+              <div class="imaging-control-header">
+                <span class="imaging-control-label">Gain</span>
+                <span class="imaging-control-value"><span data-slider-value>22</span> %</span>
+              </div>
+              <input type="range" min="0" max="100" step="1" value="22" aria-label="Gain" />
+            </div>
+
+            <div class="imaging-checkbox">
+              <input type="checkbox" id="scan-direction-toggle" data-toggle="scanDirection" />
+              <label for="scan-direction-toggle">Change Scan Direction</label>
+            </div>
+
+            <div class="imaging-control" data-control="frequency">
+              <div class="imaging-control-header">
+                <span class="imaging-control-label">Frequency</span>
+                <span class="imaging-control-value" data-value>14 MHz</span>
+              </div>
+              <div class="imaging-control-actions">
+                <button type="button" class="imaging-arrow" data-dir="prev" aria-label="Decrease frequency">&lt;</button>
+                <button type="button" class="imaging-arrow" data-dir="next" aria-label="Increase frequency">&gt;</button>
+                <button type="button" class="imaging-dropdown-toggle" aria-haspopup="listbox">∨</button>
+              </div>
+            </div>
+
+            <div class="imaging-control" data-control="angle">
+              <div class="imaging-control-header">
+                <span class="imaging-control-label">Angle</span>
+                <span class="imaging-control-value" data-value>0 °</span>
+              </div>
+              <div class="imaging-control-actions">
+                <button type="button" class="imaging-arrow" data-dir="prev" aria-label="Decrease angle">&lt;</button>
+                <button type="button" class="imaging-arrow" data-dir="next" aria-label="Increase angle">&gt;</button>
+                <button type="button" class="imaging-dropdown-toggle" aria-haspopup="listbox">∨</button>
+              </div>
+            </div>
+          </div>
+
+          <div class="imaging-section" data-imaging-page="2" style="display:none;">
+            <div class="imaging-checkbox">
+              <input type="checkbox" id="image-enhancement-toggle" data-toggle="imageEnhancement" />
+              <label for="image-enhancement-toggle">Image Enhancement</label>
+            </div>
+            <div class="imaging-control" data-control="enhancementMethod" data-dependent="imageEnhancement" style="display:none;">
+              <div class="imaging-control-header">
+                <span class="imaging-control-label">Enhancement Method</span>
+                <span class="imaging-control-value" data-value>3</span>
+              </div>
+              <div class="imaging-control-actions">
+                <button type="button" class="imaging-arrow" data-dir="prev" aria-label="Previous enhancement method">&lt;</button>
+                <button type="button" class="imaging-arrow" data-dir="next" aria-label="Next enhancement method">&gt;</button>
+                <button type="button" class="imaging-dropdown-toggle" aria-haspopup="listbox">∨</button>
+              </div>
+            </div>
+
+            <div class="imaging-checkbox" style="margin-top:0.75rem;">
+              <input type="checkbox" id="speckle-reduction-toggle" data-toggle="speckleReduction" />
+              <label for="speckle-reduction-toggle">Speckle Reduction</label>
+            </div>
+            <div class="imaging-control" data-control="speckleLevel" data-dependent="speckleReduction" style="display:none;">
+              <div class="imaging-control-header">
+                <span class="imaging-control-label">Speckle Level</span>
+                <span class="imaging-control-value" data-value>1 Pure View</span>
+              </div>
+              <div class="imaging-control-actions">
+                <button type="button" class="imaging-arrow" data-dir="prev" aria-label="Lower speckle level">&lt;</button>
+                <button type="button" class="imaging-arrow" data-dir="next" aria-label="Raise speckle level">&gt;</button>
+                <button type="button" class="imaging-dropdown-toggle" aria-haspopup="listbox">∨</button>
+              </div>
+            </div>
+
+            <div class="imaging-slider" data-slider="rejection">
+              <div class="imaging-control-header">
+                <span class="imaging-control-label">Rejection</span>
+                <span class="imaging-control-value"><span data-slider-value>19</span></span>
+              </div>
+              <input type="range" min="0" max="100" step="1" value="19" aria-label="Rejection" />
+            </div>
+
+            <div class="imaging-checkbox">
+              <input type="checkbox" id="negative-toggle" data-toggle="negative" />
+              <label for="negative-toggle">Negative</label>
+            </div>
+          </div>
+
+          <div class="imaging-section" data-imaging-page="3" style="display:none;">
+            <div class="imaging-control" data-rotation-grid>
+              <div class="imaging-control-header">
+                <span class="imaging-control-label">Rotate Image</span>
+                <span class="imaging-control-value" data-rotation-value>0°</span>
+              </div>
+              <div class="measurement-grid" style="grid-template-columns: repeat(4, minmax(0, 1fr));">
+                <button type="button" data-rotation="0°">0°</button>
+                <button type="button" data-rotation="90°">90°</button>
+                <button type="button" data-rotation="180°">180°</button>
+                <button type="button" data-rotation="270°">270°</button>
+              </div>
+            </div>
+
+            <div class="imaging-control" data-control="frameAveraging">
+              <div class="imaging-control-header">
+                <span class="imaging-control-label">Frame Averaging</span>
+                <span class="imaging-control-value" data-value>5</span>
+              </div>
+              <div class="imaging-control-actions">
+                <button type="button" class="imaging-arrow" data-dir="prev" aria-label="Decrease frame averaging">&lt;</button>
+                <button type="button" class="imaging-arrow" data-dir="next" aria-label="Increase frame averaging">&gt;</button>
+                <button type="button" class="imaging-dropdown-toggle" aria-haspopup="listbox">∨</button>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <div class="imaging-footer">
+          <div class="imaging-pagination">
+            <button type="button" data-page-nav="prev" aria-label="Previous page">&lt;</button>
+            <span data-page-indicator>1 / 3</span>
+            <button type="button" data-page-nav="next" aria-label="Next page">&gt;</button>
+          </div>
+        </div>
+      </div>
+
+      <div class="imaging-tab-panel" data-panel="recording" role="tabpanel" aria-hidden="true">
+        <div class="imaging-panel-scroll">
+          <span class="imaging-badge">Recorder</span>
+          <div class="recording-status-box paused" data-recording-status>
+            <span data-recording-dot style="display:none; width:8px; height:8px; border-radius:50%; background:#ff6b6b;"></span>
+            <span data-recording-time>00:00:00</span>
+          </div>
+          <button type="button" class="imaging-button" data-recording-toggle>Start Recording</button>
+
+          <div class="recording-format">
+            <button type="button" class="active" data-recording-format="mp4">MP4</button>
+            <button type="button" data-recording-format="avi">AVI</button>
+          </div>
+
+          <div class="recording-actions">
+            <button type="button" class="imaging-button secondary" data-recording-action="capture">Capture Frame</button>
+            <button type="button" class="imaging-button secondary" data-recording-action="play">Play Recording</button>
+            <button type="button" class="imaging-button secondary" data-recording-action="open-folder">Open Folder</button>
+            <button type="button" class="imaging-button" data-action="open-itk"><i class="fas fa-external-link-alt"></i> Open in ITK-Snap</button>
+            <button type="button" class="imaging-button secondary" data-action="overview"><i class="fas fa-camera"></i> Overview Image</button>
+          </div>
+
+          <div class="recording-meta" style="margin-top:1.25rem;">
+            <div>Format: <span data-recording-format-display>MP4</span></div>
+            <div>Quality: 1920×1080</div>
+            <div>Bitrate: 10 Mbps</div>
+          </div>
+        </div>
+      </div>
+
+      <div class="imaging-tab-panel" data-panel="measurements" role="tabpanel" aria-hidden="true">
+        <div class="imaging-panel-scroll">
+          <span class="imaging-badge">Measurements</span>
+
+          <div class="measurement-grid" style="margin-top:1rem;">
+            <button type="button" data-measure-mode="distance">Distance</button>
+            <button type="button" data-measure-mode="area">Area</button>
+            <button type="button" data-measure-mode="angle">Angle</button>
+            <button type="button" data-measure-mode="none">Clear</button>
+          </div>
+
+          <div class="measurement-card" data-measure-card style="display:none;">
+            <h4>Active Measurement</h4>
+            <dl>
+              <dt>Mode</dt>
+              <dd data-measure-mode-display>—</dd>
+              <dt>Points</dt>
+              <dd data-measure-points>0</dd>
+              <dt>Value</dt>
+              <dd data-measure-value>—</dd>
+            </dl>
+          </div>
+
+          <div class="measurement-recent" data-measure-recent>
+            <div class="measurement-item">Distance: 45.2 mm</div>
+            <div class="measurement-item">Area: 1,234 mm²</div>
+            <div class="measurement-item">Angle: 67.5°</div>
+          </div>
+
+          <div class="measurement-actions">
+            <button type="button" class="imaging-button secondary" data-measure-action="export">Export Report</button>
+            <button type="button" class="imaging-button secondary" data-measure-action="clear">Clear All</button>
+          </div>
+        </div>
       </div>
     </div>
   </section>
@@ -232,6 +477,7 @@
   window.__FRONTEND_US_RELOAD_PERIOD_MS = parseInt("{{ config.FRONTEND_US_RELOAD_PERIOD_MS if config else 60000 }}");
 </script>
 <script src="{{ url_for('static', filename='js/app.js') }}"></script>
+<script src="{{ url_for('static', filename='imaging/imaging.js') }}" defer></script>
 
 </body>
 </html>

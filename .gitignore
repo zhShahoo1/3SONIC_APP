@@ -24,6 +24,7 @@ build/
 *.sublime-project
 .venv/
 data/
+control-ui/
 
 # Runtime state files (created at runtime; should not be committed)
 /run/

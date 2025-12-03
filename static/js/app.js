@@ -826,6 +826,7 @@
     bindInsertBath();
     bindUltrasoundAutoReload();
     bindWindowControls();
+    bindWindowDragHandle();
 
     // default visible
     showUltrasound();
@@ -848,7 +849,6 @@
     const container = document.getElementById('window-controls');
     if (!container) return;
     const toggleBtn = document.getElementById('wc-toggle');
-    const btns = document.getElementById('wc-buttons');
     const minBtn = document.getElementById('win-minimize');
     const maxBtn = document.getElementById('win-maximize');
     const closeBtn = document.getElementById('win-close');
@@ -868,24 +868,177 @@
       try { const current = !container.classList.contains('hidden'); setVisible(!current); } catch (err) { console.error('[win-controls] toggle failed', err); }
     });
 
-    function callApi(name) {
+    let isMaximized = false;
+
+    const updateMaximizeButton = (flag) => {
+      isMaximized = !!flag;
+      if (!maxBtn) return;
+      const title = isMaximized ? 'Restore window' : 'Maximize window';
+      maxBtn.title = title;
+      maxBtn.setAttribute('aria-label', title);
+      maxBtn.textContent = isMaximized ? '❐' : '▢';
+      maxBtn.dataset.state = isMaximized ? 'restore' : 'maximize';
+    };
+
+    const applyWindowState = (payload) => {
+      if (!payload || typeof payload !== 'object') return;
+      const next = {};
+      if ('maximized' in payload) {
+        updateMaximizeButton(!!payload.maximized);
+        next.maximized = !!payload.maximized;
+      }
+      if (Object.keys(next).length) {
+        if (!window.__3sonicWindowState) window.__3sonicWindowState = {};
+        Object.assign(window.__3sonicWindowState, next);
+      }
+    };
+
+    // Expose helper so other modules (drag handle) can sync the button state
+    window.__3sonicApplyWindowState = applyWindowState;
+
+    async function callApi(name, ...args) {
       try {
         if (window.pywebview && window.pywebview.api && typeof window.pywebview.api[name] === 'function') {
-          window.pywebview.api[name]();
-        } else {
-          // Fallbacks for non-desktop: try window controls
-          if (name === 'close') { try { window.close(); } catch {} }
-          if (name === 'minimize') { try { window.blur(); } catch {} }
-          if (name === 'maximize' || name === 'toggle_maximize') { try { window.focus(); } catch {} }
+          return await window.pywebview.api[name](...args);
         }
-      } catch (e) { console.error('[win-controls] api call failed', e); }
+      } catch (e) {
+        console.error('[win-controls] api call failed', e);
+        return null;
+      }
+
+      // Fallbacks for non-desktop contexts
+      try {
+        if (name === 'close') { window.close(); }
+        if (name === 'minimize') { window.blur(); }
+        if (name === 'maximize' || name === 'toggle_maximize') { window.focus(); }
+      } catch (_) {}
+      return null;
     }
 
-    minBtn?.addEventListener('click', () => callApi('minimize'));
-    maxBtn?.addEventListener('click', () => callApi('toggle_maximize'));
-    closeBtn?.addEventListener('click', () => {
-      if (!confirm('Close the app?')) return; callApi('close');
+    const syncWindowState = async () => {
+      try {
+        const state = await callApi('window_state');
+        applyWindowState(state);
+      } catch (err) {
+        console.error('[win-controls] state sync failed', err);
+      }
+    };
+
+    minBtn?.addEventListener('click', () => { void callApi('minimize'); });
+    maxBtn?.addEventListener('click', async () => {
+      const state = await callApi('toggle_maximize');
+      applyWindowState(state);
+      if (!state || typeof state !== 'object') {
+        await syncWindowState();
+      }
     });
+    closeBtn?.addEventListener('click', async () => {
+      if (!confirm('Close the app?')) return;
+      await callApi('close');
+    });
+
+    // Attempt an initial sync once the pywebview bridge is ready
+    if (window.pywebview && window.pywebview.api && typeof window.pywebview.api.window_state === 'function') {
+      syncWindowState();
+    } else {
+      setTimeout(syncWindowState, 400);
+    }
+  }
+
+  function bindWindowDragHandle() {
+    const primaryHandle = document.getElementById('drag-handle');
+    const header = document.querySelector('header');
+    if (!primaryHandle && !header) return;
+
+    const apiAvailable = () => window.pywebview && window.pywebview.api;
+    const canDrag = () => {
+      const api = apiAvailable();
+      return !!(api && typeof api.drag === 'function');
+    };
+
+    const pushWindowState = (payload) => {
+      try {
+        if (payload && typeof window.__3sonicApplyWindowState === 'function') {
+          window.__3sonicApplyWindowState(payload);
+        }
+      } catch (err) {
+        console.error('[window-drag] state propagate failed', err);
+      }
+    };
+
+    const shouldCancel = (target) => {
+      if (!target) return false;
+      const cancelMatch = target.closest('[data-drag-cancel]');
+      if (cancelMatch) return true;
+      const interactive = target.closest('button, a, input, select, textarea, label, [role="button"]');
+      return !!interactive;
+    };
+
+    const startDrag = async (event) => {
+      if (event.type === 'mousedown' && event.button !== 0) return;
+      const api = apiAvailable();
+      if (!api || typeof api.drag !== 'function') return;
+      event.preventDefault();
+      try {
+        const cached = window.__3sonicWindowState;
+        if (cached && cached.maximized && typeof api.restore === 'function') {
+          try { await api.restore(); } catch (restoreErr) { console.warn('[window-drag] restore before drag failed', restoreErr); }
+          if (cached) cached.maximized = false;
+        }
+        const result = await api.drag();
+        if (result === false) {
+          console.warn('[window-drag] drag() returned false');
+        }
+      } catch (err) {
+        console.error('[window-drag] failed', err);
+      }
+    };
+
+    const attachRegion = (el) => {
+      if (!el) return;
+
+      el.addEventListener('mousedown', (event) => {
+        if (event.button !== 0) return;
+        if (event.defaultPrevented) return;
+        if (shouldCancel(event.target)) return;
+        void startDrag(event);
+      });
+
+      el.addEventListener('touchstart', (event) => {
+        if (event.defaultPrevented) return;
+        if (shouldCancel(event.target)) return;
+        if (!canDrag()) return;
+        event.preventDefault();
+        void startDrag(event);
+      }, { passive: false });
+
+      el.addEventListener('dblclick', async (event) => {
+        const api = apiAvailable();
+        if (!api || typeof api.toggle_maximize !== 'function') return;
+        if (event.defaultPrevented) return;
+        if (shouldCancel(event.target)) return;
+        event.preventDefault();
+        try {
+          const state = await api.toggle_maximize();
+          if (!state || typeof state !== 'object') {
+            if (typeof api.window_state === 'function') {
+              const fresh = await api.window_state();
+              pushWindowState(fresh);
+              return;
+            }
+          }
+          pushWindowState(state);
+        } catch (err) {
+          console.error('[window-drag] toggle maximize failed', err);
+        }
+      });
+    };
+
+    attachRegion(primaryHandle);
+    // Allow dragging from other clear areas of the header so users can move between monitors easily
+    if (header) {
+      attachRegion(header);
+    }
   }
 
   // ------------------------- Position Polling -------------------------------

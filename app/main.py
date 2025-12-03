@@ -206,7 +206,8 @@ def api_lower_plate():
 @app.route("/api/position-for-scan", methods=["POST"])
 def api_position_for_scan():
     try:
-        pose = getattr(Config, "SCAN_POSE", {"X": 53.5, "Y": 53.5, "Z": 10.0})
+        # pose = getattr(Config, "SCAN_POSE", {"X": 53.5, "Y": 53.5, "Z": 10.0})
+        pose = getattr(Config, "SCAN_POSE", { "Z": 10.0})
         xyz_feed = int(getattr(Config, "XYZ_FEED_MM_PER_MIN", 2000))
 
         send_now("G90")
@@ -1298,6 +1299,9 @@ def _launch_desktop():
         # (hideable) window controls inside the HTML header. If frameless
         # windows are unsupported, fall back to a regular window.
         class _WindowApi:
+            def __init__(self):
+                self._maximized = False
+
             def minimize(self):
                 try:
                     if _WEBVIEW_WINDOW is not None:
@@ -1311,6 +1315,7 @@ def _launch_desktop():
                 try:
                     if _WEBVIEW_WINDOW is not None:
                         _WEBVIEW_WINDOW.maximize()
+                        self._maximized = True
                         return True
                 except Exception:
                     pass
@@ -1320,6 +1325,7 @@ def _launch_desktop():
                 try:
                     if _WEBVIEW_WINDOW is not None:
                         _WEBVIEW_WINDOW.restore()
+                        self._maximized = False
                         return True
                 except Exception:
                     pass
@@ -1328,17 +1334,14 @@ def _launch_desktop():
             def toggle_maximize(self):
                 try:
                     if _WEBVIEW_WINDOW is not None:
-                        try:
-                            _WEBVIEW_WINDOW.toggle_fullscreen()
-                        except Exception:
-                            try:
-                                _WEBVIEW_WINDOW.maximize()
-                            except Exception:
-                                pass
-                        return True
+                        if self._maximized:
+                            self.restore()
+                        else:
+                            self.maximize()
+                        return {"maximized": self._maximized}
                 except Exception:
                     pass
-                return False
+                return {"maximized": self._maximized}
 
             def close(self):
                 try:
@@ -1349,6 +1352,18 @@ def _launch_desktop():
                     pass
                 return False
 
+            def drag(self):
+                try:
+                    if _WEBVIEW_WINDOW is not None:
+                        _WEBVIEW_WINDOW.drag_window()
+                        return True
+                except Exception:
+                    pass
+                return False
+
+            def window_state(self):
+                return {"maximized": self._maximized}
+
         api = _WindowApi()
         try:
             _WEBVIEW_WINDOW = webview.create_window(
@@ -1357,8 +1372,9 @@ def _launch_desktop():
                 width=980,
                 height=820,
                 resizable=True,
-                min_size=(760, 520),
+                min_size=(600, 420),
                 frameless=True,
+                easy_drag=False,
                 js_api=api,
             )
         except Exception as e:
@@ -1369,7 +1385,8 @@ def _launch_desktop():
                 width=980,
                 height=820,
                 resizable=True,
-                min_size=(400, 950),
+                min_size=(600, 420),
+                easy_drag=False,
                 js_api=api,
             )
 
@@ -1398,6 +1415,10 @@ def _launch_desktop():
                 if _WEBVIEW_WINDOW is not None:
                     try:
                         _WEBVIEW_WINDOW.maximize()
+                        try:
+                            api._maximized = True
+                        except Exception:
+                            pass
                     except Exception:
                         pass
             except Exception:
