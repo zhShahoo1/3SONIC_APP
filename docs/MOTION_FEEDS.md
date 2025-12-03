@@ -51,7 +51,7 @@ Each entry includes the symbol name and the file where it is defined so develope
   - File: `app/config.py`
 
 - UI maximum allowed feed
- - UI maximum allowed feed
+ 
   - Value: 1200.0 mm/min
   - Symbol: `Config.UI_MAX_FEED_MM_PER_MIN`
   - File: `app/config.py`
@@ -74,7 +74,7 @@ Each entry includes the symbol name and the file where it is defined so develope
   - Value: 0.15 mm per step
   - Symbol: `Config.E_AXIS_DEFAULT_STEP`
   - File: `app/config.py`
-  - Note: E-axis persistent file referenced in `app/core/scanner_control.py` (see `_E_AXIS_POS_FILE`).
+  - Note: E-axis persistent file is written under the configured `DATA_DIR` (default `static/data`) as `e_axis_position.txt` (see `app/core/scanner_control.py` `_E_AXIS_POS_FILE`).
 
 - Z / explicit positioning feeds
  - Z / explicit positioning feeds
@@ -103,6 +103,8 @@ Where to change them
 ---------------------
 - Edit `app/config.py` (preferred) or set the corresponding environment variable before launching the app (e.g. `UI_LINEAR_FEED_MM_PER_MIN`, `UI_DEFAULT_TICK_S`, etc.).
 - Keyboard-specific settings are in `app/core/keyboard_control.py` (`STEP_CONTINUOUS_MM`, `STEP_INTERVAL_S`, `USE_QUICKSTOP`).
+
+Note: recent refactors colocate ephemeral runtime flags under `run/` and bundled native resources under `src/` (see `app/config.py` for `STATE_DIR`, `US_DLL_NAME`, and `DICOM_TEMPLATE_NAME`). Use `app/config.py` as the canonical source of defaults.
 
 Safety recommendations
 ----------------------

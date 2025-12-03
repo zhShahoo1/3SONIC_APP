@@ -48,13 +48,13 @@ These defaults are defined in `app/config.py` and injected to the browser in `te
   - keyboard per-tick increment `STEP_CONTINUOUS_MM` default: 0.10 mm
 
 - UI maximum allowed feed:
-  - `UI_MAX_FEED_MM_PER_MIN` default: 5000.0
-    - Equivalent: 83.33 mm/s (5000.0 ÷ 60)
+  - `UI_MAX_FEED_MM_PER_MIN` default: 1200.0
+    - Equivalent: 20.0 mm/s (1200.0 ÷ 60)
 
 - Rotation / E-axis:
   - `E_AXIS_DEFAULT_STEP` default: 0.15 mm (default step for rotate keys)
   - `ELEV_RESOLUTION_MM` default: 0.06 mm (e_r — elevation resolution; used to compute scan feed when `SCAN_FEED_FROM_ER_FPS` is enabled)
-  - E-axis persistent file: `app/data/e_axis_position.txt` (the code writes `data/e_axis_position.txt`, check `app/core/scanner_control.py` `_E_AXIS_POS_FILE`)
+  - E-axis persistent file: stored under the configured `DATA_DIR` (by default `static/data`) as `e_axis_position.txt` (see `app/core/scanner_control.py` `_E_AXIS_POS_FILE`). Do not assume `app/data/`.
   - Travel speed / recorder legacy:
     - `TRAVEL_SPEED_X_MM_PER_S` default: 0.5 mm/s (legacy recorder helper)
     - File: `app/config.py`
@@ -70,7 +70,9 @@ Where to change each value
 - Edit `app/config.py` to permanently change defaults. Most values read environment variables via `_env_float()` or `_env_bool()` so you can also override them at runtime without editing the file.
   - Example: `UI_LINEAR_FEED_MM_PER_MIN` is defined in `app/config.py` as `UI_LINEAR_FEED_MM_PER_MIN: float = _env_float("UI_LINEAR_FEED_MM_PER_MIN", 360.0)`
 
-- Frontend injection: `templates/main.html` exposes server `Config` values to the browser. Example (search for `window.__UI_LINEAR_FEED` in `templates/main.html`) — change `Config` in `app/config.py` or the template if you need a different runtime injection.
+  - Frontend injection: `templates/main.html` exposes server `Config` values to the browser. Example (search for `window.__UI_LINEAR_FEED` in `templates/main.html`) — change `Config` in `app/config.py` or the template if you need a different runtime injection.
+
+Note: the repository recently colocated ephemeral runtime flags under a `run/` directory and moved bundled native resources to `src/` (see `app/config.py` for `STATE_DIR` and `US_DLL_NAME`/`DICOM_TEMPLATE_NAME`). The canonical defaults live in `app/config.py`; some client-side fallbacks may use different hard-coded fallback values when `Config` is unavailable (e.g., templates sometimes use `5000.0` as a protective fallback). Always prefer `app/config.py` as the source of truth.
 
 - Per-keyboard behavior: `app/core/keyboard_control.py` defines `STEP_CONTINUOUS_MM` and `STEP_INTERVAL_S`. If you modify these, the keyboard jog cadence/granularity will change. The file also computes a capped `FEEDRATE` based on `Config.UI_LINEAR_FEED_MM_PER_MIN`.
 
