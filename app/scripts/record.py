@@ -31,6 +31,7 @@ import signal
 from datetime import datetime
 import numpy as np
 import subprocess as sp
+import threading
 import platform
 
 from app.config import Config
@@ -263,7 +264,26 @@ def main(argv: list[str]) -> int:
     # Spawn imconv only if we actually captured frames and not force-stopped
     if frames_written > 0 and not _STOP:
         try:
-            sp.Popen([sys.executable, "-m", "app.scripts.imconv"], cwd=str(Config.BASE_DIR))
+            try:
+                sp.Popen([sys.executable, "-m", "app.scripts.imconv"], cwd=str(Config.BASE_DIR))
+            except Exception as _e:
+                # Fallback for frozen EXE: import and run imconv in-process
+                try:
+                    import importlib
+                    def _imconv_runner():
+                        try:
+                            mod = importlib.import_module("app.scripts.imconv")
+                            try:
+                                mod.main([])
+                            except TypeError:
+                                # If imconv has no main, try calling run()
+                                if hasattr(mod, "run"):
+                                    mod.run()
+                        except Exception as ex:
+                            print(f"[record][imconv][inproc] error: {ex}")
+                    threading.Thread(target=_imconv_runner, daemon=True).start()
+                except Exception as ex:
+                    print(f"[record] imconv fallback failed: {ex}")
         except Exception as e:
             print(f"[record] ⚠ failed to spawn imconv: {e}")
     else:

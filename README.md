@@ -133,13 +133,14 @@ All tunables live in `app/config.py::Config`. Important ones:
 
   * `BASE_DIR`, `STATIC_DIR`, `TEMPLATES_DIR`, `APP_DIR`
   * `DATA_DIR` — where scans are recorded and post-processed
-    👉 For the Overview picker to serve PNGs, set `DATA_DIR` to live **under** `static/data`, e.g.:
+    👉 By default `DATA_DIR` lives under the project root (`data/`). The app exposes
+    these files via the `/data/<scan_folder>/...` route (for example:
 
-    ```python
-    DATA_DIR = STATIC_DIR / "data"
+    ```text
+    /data/20250912_092928/Example_slices.png
     ```
 
-    so `static/data/<timestamp>/Example_slices.png` is web-reachable.
+    You can override `DATA_DIR` in `app/config.py` if you prefer a different location.
 
 * **Geometry & motion**
 
@@ -197,7 +198,7 @@ When a scan finishes, `postprocessing.py` will:
 **Folder layout (per scan)**:
 
 ```
-static/data/
+data/
   2025-08-26_10-31-12/
     dicom_series/ ...
     Example_slices.png
@@ -205,7 +206,8 @@ static/data/
     config.txt
 ```
 
-**Overview picker** uses those `Example_slices.png` files to build the list.
+**Overview picker** uses those `Example_slices.png` files to build the list. The
+files are served at `/data/<scan-folder>/Example_slices.png` by the app.
 
 ---
 
@@ -235,7 +237,9 @@ If you supply `app/core/keyboard_control.py` (optional), the app will best-effor
 
 **Overview images don’t show**
 
-* Ensure `DATA_DIR = STATIC_DIR / "data"` (or expose `DATA_DIR` via a Flask static route).
+* Ensure `DATA_DIR` points to your scan output root (defaults to project `data/`).
+  The app exposes these files at `/data/<scan-folder>/...` so the Overview picker
+  can access them without requiring them to live under `static/`.
 * Confirm each scan folder contains `Example_slices.png`.
 
 **ITK-SNAP button does nothing**

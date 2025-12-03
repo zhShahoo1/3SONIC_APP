@@ -162,6 +162,57 @@ footer p {
   gap: 0.55rem;
 }
 
+/* Layout for the display header: left title, right control buttons */
+.display-header-left {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  flex: 1 1 auto;
+}
+.display-controls {
+  display: flex;
+  gap: 0.5rem;
+  align-items: center;
+}
+.display-controls .icon-button .btn-label { display: none; }
+.display-controls .icon-button img.icon { width: 18px; height: 18px; }
+
+/* Header status badges (serial / probe) */
+.header-status {
+  display: flex;
+  gap: 0.6rem;
+  align-items: center;
+}
+.status-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.32rem 0.6rem;
+  border-radius: 10px;
+  background: rgba(255,255,255,0.02);
+  border: 1px solid rgba(255,255,255,0.03);
+  font-size: 0.82rem;
+  color: var(--text-dim);
+  transition: all 0.18s ease;
+}
+.status-badge .status-dot {
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  display: inline-block;
+  box-shadow: 0 2px 8px rgba(0,0,0,0.6);
+}
+.status-badge .status-text { font-weight: 600; color: var(--text); }
+.status-badge .status-dot.online { background: linear-gradient(180deg, #3ee6c9, #00a8a0); border: 1px solid rgba(0,0,0,0.2); }
+.status-badge .status-dot.offline { background: linear-gradient(180deg, #ff8a8a, #ff5656); border: 1px solid rgba(0,0,0,0.2); opacity: 0.95; }
+.status-badge.ok { border-color: rgba(62,230,201,0.16); box-shadow: 0 6px 18px rgba(0,168,160,0.08); }
+.status-badge.warn { border-color: rgba(255,197,79,0.14); box-shadow: 0 6px 18px rgba(255,180,60,0.06); }
+.status-badge.off { border-color: rgba(255,90,90,0.08); box-shadow: none; opacity: 0.95; }
+
+@media (max-width: 900px) {
+  .display-controls .btn-label { display: none; }
+}
+
 .card-content {
   padding: 1.1rem 1.25rem;
 }

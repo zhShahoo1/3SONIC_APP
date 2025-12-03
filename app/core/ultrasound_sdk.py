@@ -353,6 +353,19 @@ def grab_rgba_frame() -> np.ndarray:
 def get_resolution() -> Tuple[float, float]:
     return _UltrasoundDLL().resolution
 
+
+def is_connected() -> bool:
+    """Return True if the ultrasound DLL/probe is currently initialized.
+
+    This is a lightweight, non-blocking check that inspects the singleton
+    state rather than attempting a full re-initialization.
+    """
+    try:
+        inst = _UltrasoundDLL()
+        return bool(getattr(inst, "_initialized", False) or getattr(inst, "_dll", None) is not None)
+    except Exception:
+        return False
+
 def freeze() -> None:
     _UltrasoundDLL().freeze()
 

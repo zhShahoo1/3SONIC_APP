@@ -15,22 +15,17 @@
 <body>
 <header>
   <img src="{{ url_for('static', filename='images/3SONICLogo.png') }}" alt="3SONIC Logo" class="logo" />
-  <nav>
-    <ul>
-      <li>
-        <button class="icon-button active" data-action="show-ultrasound">
-          <img src="{{ url_for('static', filename='images/scan.png') }}" alt="Ultrasound" class="icon" />
-          Ultrasound
-        </button>
-      </li>
-      <li>
-        <button class="icon-button" data-action="show-webcam">
-          <img src="{{ url_for('static', filename='images/web-camera.png') }}" alt="Camera" class="icon" />
-          Camera
-        </button>
-      </li>
-    </ul>
-  </nav>
+  <!-- header status badges (serial / probe) -->
+  <div class="header-status" id="header-status">
+    <div class="status-badge status-serial" id="status-serial" title="Serial connection status">
+      <span class="status-dot offline"></span>
+      <span class="status-text">Serial</span>
+    </div>
+    <div class="status-badge status-probe" id="status-probe" title="Ultrasound probe status">
+      <span class="status-dot offline"></span>
+      <span class="status-text">Probe</span>
+    </div>
+  </div>
 </header>
 
 <main>
@@ -142,7 +137,19 @@
   <!-- Center panel -->
   <section class="scanner-display">
     <div class="card">
-      <div class="card-header"><i class="fas fa-image"></i> <span id="display-title"></span></div>
+      <div class="card-header">
+        <div class="display-header-left"><i class="fas fa-image"></i> <span id="display-title"></span></div>
+        <div class="display-controls">
+          <button class="icon-button active" data-action="show-ultrasound" title="Show ultrasound view">
+            <img src="{{ url_for('static', filename='images/scan.png') }}" alt="Ultrasound" class="icon" />
+            <span class="btn-label">Ultrasound</span>
+          </button>
+          <button class="icon-button" data-action="show-webcam" title="Show camera view">
+            <img src="{{ url_for('static', filename='images/web-camera.png') }}" alt="Camera" class="icon" />
+            <span class="btn-label">Camera</span>
+          </button>
+        </div>
+      </div>
       <div class="card-image">
         <div class="stream-wrap">
           <img id="im1" src="{{ url_for('ultrasound_video_feed') }}" alt="Ultrasound" class="dispimg_us" />

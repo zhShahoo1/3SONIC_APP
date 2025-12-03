@@ -13,7 +13,7 @@ import subprocess as sp
 from pathlib import Path
 from typing import Tuple, Iterable, Optional
 
-from flask import Flask, Response, jsonify, render_template, request
+from flask import Flask, Response, jsonify, render_template, request, send_from_directory
 
 # Optional desktop shell
 try:
@@ -44,6 +44,7 @@ if __package__ is None or __package__ == "":
         wait_for_motion_complete,
         close_serial,
     )
+    import app.core.serial_manager as serial_manager
     try:
         from app.core.keyboard_control import start_keyboard_listener, enable_keyboard
     except Exception:
@@ -62,6 +63,7 @@ else:
         wait_for_motion_complete,
         close_serial,
     )
+    from .core import serial_manager
     try:
         from .core.keyboard_control import start_keyboard_listener, enable_keyboard
     except Exception:
@@ -807,8 +809,30 @@ def _launch_recorder(multi: bool, x0: float, x1: float, pos_str: str) -> None:
         proc = sp.Popen([python_exe, str(rec_path), "1" if multi else "0"],
                         cwd=str(PROJECT_ROOT), env=env)
         _CHILD_PROCS.append(proc)
+        return
     except Exception as e:
-        print(f"[scan] failed to spawn recorder: {e}")
+        print(f"[scan] failed to spawn recorder (falling back in-process): {e}")
+
+    # Fallback for frozen/onefile Exe: run the recorder module in-process
+    try:
+        import importlib
+        def _runner():
+            try:
+                mod = importlib.import_module("app.scripts.record")
+                # call as if argv[1] were the multi flag
+                argv = [str(rec_path), "1" if multi else "0"]
+                try:
+                    mod.main(argv)
+                except TypeError:
+                    # older signature: try without args
+                    mod.main([])
+            except Exception as ex:
+                print(f"[scan][inproc] recorder failed: {ex}")
+
+        t = threading.Thread(target=_runner, daemon=True)
+        t.start()
+    except Exception as ex:
+        print(f"[scan] in-process recorder fallback failed: {ex}")
 
 def _start_scan(multi: bool, start_x: float | None = None, end_x: float | None = None):
     scanning_f, multisweep_f, _ = _flag_paths()
@@ -915,7 +939,26 @@ def _run_multisweep_sequence(start_x: float | None = None, end_x: float | None =
 
         multi_path = (Config.APP_DIR / "scripts" / "multisweep.py").resolve()
         python_exe = getattr(Config, "PYTHON_EXE", sys.executable)
-        sp.Popen([python_exe, str(multi_path)], cwd=str(PROJECT_ROOT))
+        try:
+            sp.Popen([python_exe, str(multi_path)], cwd=str(PROJECT_ROOT))
+        except Exception as e:
+            print(f"[multisweep] spawn failed, falling back in-process: {e}")
+            try:
+                import importlib
+                def _run_multi():
+                    try:
+                        mod = importlib.import_module("app.scripts.multisweep")
+                        try:
+                            mod.main([])
+                        except TypeError:
+                            # best-effort if main signature differs
+                            if hasattr(mod, 'run'):
+                                mod.run()
+                    except Exception as ex:
+                        print(f"[multisweep][inproc] error: {ex}")
+                threading.Thread(target=_run_multi, daemon=True).start()
+            except Exception as ex:
+                print(f"[multisweep] in-process fallback failed: {ex}")
 
         time.sleep(2.0)
         return True, older.name
@@ -1009,7 +1052,7 @@ def api_overview_list():
             if png.exists():
                 out.append({
                     "folder": p.name,
-                    "png_url": f"/static/data/{p.name}/Example_slices.png",
+                    "png_url": f"/data/{p.name}/Example_slices.png",
                     "created": png.stat().st_mtime
                 })
             if len(out) >= n:
@@ -1019,6 +1062,19 @@ def api_overview_list():
         return jsonify(success=False, message=str(e), items=[]), 500
 
     return jsonify(success=True, items=items)
+
+
+@app.route("/data/<path:filename>")
+def serve_data_file(filename: str):
+    """Serve files from the project `data/` directory (Config.DATA_DIR).
+
+    This keeps scan outputs separate from Flask's `static/` assets while
+    still exposing them to the frontend via a simple route.
+    """
+    try:
+        return send_from_directory(str(Config.DATA_DIR), filename)
+    except Exception as e:
+        return (str(e), 404)
 
 @app.route("/api/overview/open", methods=["POST"])
 def api_overview_open():
@@ -1047,6 +1103,57 @@ def api_overview_open():
 @app.route("/health")
 def health():
     return jsonify(ok=True)
+
+
+@app.route("/api/connections")
+def api_connections():
+    """Return connection status for serial and ultrasound probe.
+
+    JSON: { serial: bool, ultrasound: bool }
+    """
+    serial_ok = False
+    us_ok = False
+    # Serial: prefer to read the live module variable
+    try:
+        sp = getattr(serial_manager, "serial_port", None)
+        if sp is not None:
+            serial_ok = bool(getattr(sp, "is_open", False))
+        else:
+            # Fallback to connected_event_var or connected_event()
+            ev = getattr(serial_manager, "connected_event_var", None) or getattr(serial_manager, "connected_event", None)
+            try:
+                if ev is not None:
+                    # `connected_event_var` is an Event instance; `connected_event()` returns one.
+                    if hasattr(ev, "is_set"):
+                        serial_ok = bool(ev.is_set())
+                    else:
+                        # ev might be a callable returning an Event
+                        serial_ok = bool(ev().is_set())
+            except Exception:
+                serial_ok = False
+    except Exception:
+        serial_ok = False
+
+    # Ultrasound: prefer a small public helper if available, otherwise inspect
+    # the private singleton as a fallback. Avoid performing any heavy
+    # initialization here so the endpoint stays responsive.
+    try:
+        if hasattr(ultrasound_sdk, "is_connected"):
+            us_ok = bool(ultrasound_sdk.is_connected())
+        else:
+            inst_cls = getattr(ultrasound_sdk, "_UltrasoundDLL", None)
+            if inst_cls is not None:
+                try:
+                    inst = inst_cls()
+                    us_ok = bool(getattr(inst, "_initialized", False) or getattr(inst, "_dll", None) is not None)
+                except Exception:
+                    us_ok = False
+            else:
+                us_ok = False
+    except Exception:
+        us_ok = False
+
+    return jsonify(success=True, serial=bool(serial_ok), ultrasound=bool(us_ok))
 
 # ------------------------------------------------------------------------------
 # Graceful Exit API
@@ -1187,13 +1294,16 @@ def _launch_desktop():
 
     url = "http://127.0.0.1:5001"
     if _HAS_WEBVIEW:
+        # Create a fullscreen native window on the display where the app
+        # is opened. `fullscreen=True` asks pywebview to open maximized on
+        # the host display; keep resizable/min_size for non-fullscreen fallbacks.
         _WEBVIEW_WINDOW = webview.create_window(
             title=_UI_TITLE,
             url=url,
             width=380,
             height=680,
             resizable=True,
-            min_size=(360, 620),
+            min_size=(400, 950),
         )
 
         # Optional: small Windows dark-titlebar tweak
@@ -1214,7 +1324,23 @@ def _launch_desktop():
             except Exception:
                 pass
 
-        webview.start()
+        # Maximize on startup (keeps window movable/resizable so user can
+        # drag it to other monitors). Use a small startup callback so the
+        # window is created before we call maximize(). This avoids forcing
+        # an OS fullscreen mode which prevents moving between displays.
+        def _on_webview_ready():
+            try:
+                # Best-effort maximize; not all backends expose this but
+                # pywebview implements `maximize()` on common GUI backends.
+                if _WEBVIEW_WINDOW is not None:
+                    try:
+                        _WEBVIEW_WINDOW.maximize()
+                    except Exception:
+                        pass
+            except Exception:
+                pass
+
+        webview.start(_on_webview_ready)
     else:
         print("[Desktop] pywebview not installed. Opening browser instead.")
         webbrowser.open(url)

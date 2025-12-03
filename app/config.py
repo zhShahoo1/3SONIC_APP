@@ -125,11 +125,16 @@ class Config:
     ULTRA_VFLIP_LIVE: bool = _env_bool("ULTRA_VFLIP_LIVE", ULTRA_VFLIP)
     ULTRA_HFLIP_LIVE: bool = _env_bool("ULTRA_HFLIP_LIVE", ULTRA_HFLIP)
 
-    # Writable output (kept under STATIC/data). We create these (not STATIC_DIR itself).
-    DATA_DIR: Path = (STATIC_DIR / "data").resolve()
+    # Writable output directory for scans and postprocessing.
+    # Recent refactor: keep scan outputs under the project root `data/` so
+    # they are not mixed with static assets. This folder is created if missing.
+    DATA_DIR: Path = (BASE_DIR / "data").resolve()
     LOGS_DIR: Path = (DATA_DIR / "logs").resolve()
     for _p in (DATA_DIR, LOGS_DIR):
-        _p.mkdir(parents=True, exist_ok=True)
+        try:
+            _p.mkdir(parents=True, exist_ok=True)
+        except Exception:
+            pass
 
     # Runtime/state directory for flag files and ephemeral runtime artifacts.
     # Keep this separate from source so these files can be ignored by VCS.

@@ -70,11 +70,11 @@ Each entry includes the symbol name and the file where it is defined so develope
     - Symbol: `STEP_CONTINUOUS_MM`
     - File: `app/core/keyboard_control.py`
 
-- Rotation (E-axis) step default
+  - Rotation (E-axis) step default
   - Value: 0.15 mm per step
   - Symbol: `Config.E_AXIS_DEFAULT_STEP`
   - File: `app/config.py`
-  - Note: E-axis persistent file is written under the configured `DATA_DIR` (default `static/data`) as `e_axis_position.txt` (see `app/core/scanner_control.py` `_E_AXIS_POS_FILE`).
+  - Note: The application no longer persists E-axis position to disk. Rotation helpers query live position via M114 when available.
 
 - Z / explicit positioning feeds
  - Z / explicit positioning feeds

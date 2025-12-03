@@ -54,7 +54,7 @@ These defaults are defined in `app/config.py` and injected to the browser in `te
 - Rotation / E-axis:
   - `E_AXIS_DEFAULT_STEP` default: 0.15 mm (default step for rotate keys)
   - `ELEV_RESOLUTION_MM` default: 0.06 mm (e_r — elevation resolution; used to compute scan feed when `SCAN_FEED_FROM_ER_FPS` is enabled)
-  - E-axis persistent file: stored under the configured `DATA_DIR` (by default `static/data`) as `e_axis_position.txt` (see `app/core/scanner_control.py` `_E_AXIS_POS_FILE`). Do not assume `app/data/`.
+  - E-axis persistent file: stored under the configured `DATA_DIR` (by default `data/`) as `e_axis_position.txt` (see `app/core/scanner_control.py` `_E_AXIS_POS_FILE`).
   - Travel speed / recorder legacy:
     - `TRAVEL_SPEED_X_MM_PER_S` default: 0.5 mm/s (legacy recorder helper)
     - File: `app/config.py`

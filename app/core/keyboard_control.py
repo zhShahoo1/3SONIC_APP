@@ -6,8 +6,15 @@ import time
 import os
 
 # third-party (Windows: pip install keyboard pygetwindow)
-import keyboard
-import pygetwindow as gw
+try:
+    import keyboard
+except Exception:
+    keyboard = None
+
+try:
+    import pygetwindow as gw
+except Exception:
+    gw = None
 
 from app.config import Config
 from app.core.serial_manager import send_gcode, send_now, connected_event
@@ -44,11 +51,18 @@ _active_axis: tuple[str, int] | None = None
 
 
 def _is_window_focused() -> bool:
+    """Return True if the app window appears focused.
+
+    If `pygetwindow` is not available, assume focused to avoid silently
+    disabling keyboard controls on minimal installs.
+    """
+    if gw is None:
+        return True
     try:
         active = gw.getActiveWindow()
         return bool(active and (WINDOW_TITLE_FRAGMENT in active.title))
     except Exception:
-        return False
+        return True
 
 
 def emergency_stop() -> None:

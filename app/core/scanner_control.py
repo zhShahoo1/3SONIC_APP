@@ -35,30 +35,11 @@ except Exception:  # pragma: no cover
 
 
 # =============================================================================
-# E-axis persistence (absolute 'E' position across processes)
+# E-axis persistence was removed per project request.
+# Previously the absolute E position was stored in `data/e_axis_position.txt`.
+# Rotation helpers now query the live position via M114 (when available) and
+# do not persist state to disk.
 # =============================================================================
-_E_AXIS_POS_FILE: Path = (Config.DATA_DIR / "e_axis_position.txt").resolve()
-
-
-def _read_e_axis_position(default: float = 0.0) -> float:
-    try:
-        if _E_AXIS_POS_FILE.exists():
-            return float(_E_AXIS_POS_FILE.read_text().strip())
-    except Exception:
-        pass
-    return float(default)
-
-
-def _write_e_axis_position(value: float) -> None:
-    try:
-        _E_AXIS_POS_FILE.parent.mkdir(parents=True, exist_ok=True)
-        _E_AXIS_POS_FILE.write_text(f"{value:.6f}")
-    except Exception as e:
-        print(f"[E-axis] Warning: failed to persist position: {e}")
-
-
-if not _E_AXIS_POS_FILE.exists():
-    _write_e_axis_position(0.0)
 
 
 # =============================================================================
@@ -227,9 +208,14 @@ def rotate_nozzle_clockwise(step: float = _E_DEFAULT_STEP) -> Tuple[bool, str]:
         return False, "Serial not connected"
     try:
         _allow_cold_extrusion_if_needed()
-        e = _read_e_axis_position(0.0) + float(step)
+        # Query current E position (best-effort) and perform absolute move.
+        try:
+            curr = get_position_axis("E")
+            curr = 0.0 if curr is None else float(curr)
+        except Exception:
+            curr = 0.0
+        e = curr + float(step)
         if move_absolute("E", e):
-            _write_e_axis_position(e)
             return True, "Nozzle rotated clockwise."
         return False, "Failed to rotate nozzle clockwise."
     except Exception as exc:
@@ -241,9 +227,13 @@ def rotate_nozzle_counterclockwise(step: float = _E_DEFAULT_STEP) -> Tuple[bool,
         return False, "Serial not connected"
     try:
         _allow_cold_extrusion_if_needed()
-        e = _read_e_axis_position(0.0) - float(step)
+        try:
+            curr = get_position_axis("E")
+            curr = 0.0 if curr is None else float(curr)
+        except Exception:
+            curr = 0.0
+        e = curr - float(step)
         if move_absolute("E", e):
-            _write_e_axis_position(e)
             return True, "Nozzle rotated counterclockwise."
         return False, "Failed to rotate nozzle counterclockwise."
     except Exception as exc:

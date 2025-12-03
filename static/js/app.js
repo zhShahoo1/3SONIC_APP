@@ -593,6 +593,71 @@
     return overlay;
   }
 
+  // ----------------------- Connection Badges -------------------------------
+  function ensureConnectionBadges() {
+    // header-status container created in template; ensure it exists
+    const container = document.getElementById('header-status');
+    if (!container) return;
+    // nothing to create — badges are placed in template; ensure aria roles
+    container.setAttribute('role', 'status');
+  }
+
+  function updateConnectionBadges(status) {
+    try {
+      const ser = document.getElementById('status-serial');
+      const prb = document.getElementById('status-probe');
+      if (!ser || !prb) return;
+
+      // Serial
+      const sdot = ser.querySelector('.status-dot');
+      if (status && status.serial) {
+        ser.classList.add('ok'); ser.classList.remove('off');
+        sdot.classList.remove('offline'); sdot.classList.add('online');
+        ser.querySelector('.status-text').textContent = 'Serial';
+        ser.title = 'Serial: connected';
+      } else {
+        ser.classList.remove('ok'); ser.classList.add('off');
+        sdot.classList.remove('online'); sdot.classList.add('offline');
+        ser.querySelector('.status-text').textContent = 'Serial';
+        ser.title = 'Serial: disconnected';
+      }
+
+      // Probe
+      const pdot = prb.querySelector('.status-dot');
+      if (status && status.ultrasound) {
+        prb.classList.add('ok'); prb.classList.remove('off');
+        pdot.classList.remove('offline'); pdot.classList.add('online');
+        prb.querySelector('.status-text').textContent = 'Probe';
+        prb.title = 'Ultrasound probe: connected';
+      } else {
+        prb.classList.remove('ok'); prb.classList.add('off');
+        pdot.classList.remove('online'); pdot.classList.add('offline');
+        prb.querySelector('.status-text').textContent = 'Probe';
+        prb.title = 'Ultrasound probe: disconnected';
+      }
+    } catch (e) { console.error('[connections] update failed', e); }
+  }
+
+  let _connPollTimer = null;
+  function startConnectionPoll(period = 1500) {
+    // avoid duplicate timers
+    if (_connPollTimer) return;
+    (async function loop() {
+      while (true) {
+        try {
+          const res = await fetch('/api/connections');
+          if (res.ok) {
+            const j = await res.json();
+            if (j && j.success) updateConnectionBadges(j);
+          }
+        } catch (e) {
+          // ignore transient errors
+        }
+        await new Promise(r => setTimeout(r, period));
+      }
+    })();
+  }
+
   // ---- Ultrasound auto-reload with backoff and optional backend restart
   function bindUltrasoundAutoReload() {
     const us = $(SELECTORS.ultrasoundImg);
@@ -766,6 +831,9 @@
 
     // Start axis position polling and update the display
     try { startPositionPoll(); } catch (e) { console.error('[position] poll start failed', e); }
+
+    // Start connection status badges and polling
+    try { ensureConnectionBadges(); startConnectionPoll(); } catch (e) { console.error('[connections] init failed', e); }
 
     
   }
