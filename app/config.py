@@ -210,8 +210,9 @@ class Config:
     SERIAL_READ_WINDOW_S: float = _env_float("SERIAL_READ_WINDOW", 0.5)
 
     # ---------------- DLL / Ultrasound SDK ----------------
-    US_DLL_NAME: str = os.environ.get("US_DLL_NAME", "usgfw2wrapper.dll")
-    DICOM_TEMPLATE_NAME: str = os.environ.get("DICOM_TEMPLATE_NAME", "dcmimage.dcm")
+    # Resources moved into the `src/` folder for packaging and clarity.
+    US_DLL_NAME: str = os.environ.get("US_DLL_NAME", "src/usgfw2wrapper.dll")
+    DICOM_TEMPLATE_NAME: str = os.environ.get("DICOM_TEMPLATE_NAME", "src/dcmimage.dcm")
 
     # ---------------- DICOM defaults ----------------
     PATIENT_ID: str = os.environ.get("PATIENT_ID", "3SONIC001")
