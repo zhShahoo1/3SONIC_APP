@@ -4,7 +4,6 @@
    - Debounced move commands
    - Insert Bath toggle (lower ↔ position-for-scan)
    - Ultrasound auto-reload + status overlay + restart backoff
-   - Exit button confirm → /api/exit
    - Overview Image picker (lists scans, open OS viewer or browser)
    - NEW: Scan-Path selector (Long 0–118, Short 15–90, Custom x0–x1)
           Persists to localStorage and posts to backend with POST→GET fallback
@@ -59,6 +58,13 @@
   const debounce = (fn, wait = 120) => {
     let t; return (...args) => { clearTimeout(t); t = setTimeout(() => fn(...args), wait); };
   };
+
+  let exitModal = null;
+  let exitConfirmBtn = null;
+  let exitCancelBtn = null;
+  let exitOriginBtn = null;
+  let exitModalBusy = false;
+  let exitEscHandler = null;
 
   async function apiGet(url) {
     const res = await fetch(url, { method: "GET" });
@@ -347,21 +353,79 @@
     }
   }
 
-  async function exitApp(btn) {
-    if (!confirm("Exit the app now? This will close the scanner connection and window.")) return;
-    setBusy(btn, true); const ROT_TICK = window.__UI_DEFAULT_TICK || 0.02;
-    const originalHTML = btn.innerHTML;
+  function closeExitModal(resetOrigin = true) {
+    if (!exitModal) return;
+    toggle(exitModal, false);
+    exitModalBusy = false;
+    if (exitEscHandler) {
+      document.removeEventListener('keydown', exitEscHandler);
+      exitEscHandler = null;
+    }
+    if (exitConfirmBtn) setBusy(exitConfirmBtn, false);
+    exitConfirmBtn?.removeAttribute('disabled');
+    exitCancelBtn?.removeAttribute('disabled');
+    if (resetOrigin) exitOriginBtn = null;
+  }
+
+  function showExitModal(btn) {
+    if (!exitModal || !exitConfirmBtn) {
+      performExit(btn);
+      return;
+    }
+    if (exitModalBusy) return;
+    exitOriginBtn = btn ?? null;
+    setBusy(exitConfirmBtn, false);
+    exitConfirmBtn.removeAttribute('disabled');
+    exitCancelBtn?.removeAttribute('disabled');
+    toggle(exitModal, true);
+    if (!exitEscHandler) {
+      exitEscHandler = (ev) => {
+        if (ev.key === 'Escape' && !exitModalBusy) {
+          ev.preventDefault();
+          closeExitModal();
+        }
+      };
+      document.addEventListener('keydown', exitEscHandler);
+    }
+    setTimeout(() => exitConfirmBtn?.focus(), 20);
+  }
+
+  async function performExit(btnOverride = null) {
+    const sourceBtn = btnOverride ?? exitOriginBtn;
+    if (exitConfirmBtn) setBusy(exitConfirmBtn, true);
+    exitCancelBtn?.setAttribute('disabled', 'disabled');
+    exitModalBusy = true;
+
+    let originalHTML = null;
+    const busyLabel = sourceBtn?.dataset?.busyLabel;
+    if (sourceBtn) {
+      originalHTML = sourceBtn.innerHTML;
+      setBusy(sourceBtn, true);
+      if (busyLabel) sourceBtn.innerHTML = busyLabel;
+    }
+
     try {
-      btn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Exiting...';
       await fetch(ENDPOINTS.exit, { method: "POST" });
+      closeExitModal();
       setTimeout(() => {
+        try { window.pywebview?.api?.close?.(); } catch {}
         try { window.close(); } catch {}
         try { window.location.href = "about:blank"; } catch {}
       }, 250);
     } catch (e) {
       console.error("[exit] error:", e.message);
-      setTimeout(() => { btn.innerHTML = originalHTML; setBusy(btn, false); }, 1200);
+      if (sourceBtn && originalHTML != null) sourceBtn.innerHTML = originalHTML;
+      if (sourceBtn) setBusy(sourceBtn, false);
+      if (exitConfirmBtn) setBusy(exitConfirmBtn, false);
+      exitConfirmBtn?.removeAttribute('disabled');
+      exitCancelBtn?.removeAttribute('disabled');
+      exitModalBusy = false;
+      alert("Unable to close the application: " + e.message);
     }
+  }
+
+  function exitApp(btn) {
+    showExitModal(btn);
   }
 
   // Movement & rotation (debounced)
@@ -450,8 +514,6 @@
 
           case "show-ultrasound": return showUltrasound();
           case "show-webcam": return showWebcam();
-
-          case "exit": return exitApp(btn);
         }
       });
 
@@ -825,6 +887,7 @@
     bindKeyboard();
     bindInsertBath();
     bindUltrasoundAutoReload();
+    bindExitModal();
     bindWindowControls();
 
     // default visible
@@ -844,6 +907,33 @@
   document.addEventListener("DOMContentLoaded", init);
 
   // ----------------------- Window Controls (desktop only) -----------------
+  function bindExitModal() {
+    exitModal = document.getElementById('exitConfirm');
+    exitConfirmBtn = document.getElementById('exitConfirmBtn');
+    exitCancelBtn = document.getElementById('exitCancelBtn');
+    if (!exitModal || !exitConfirmBtn) return;
+
+    exitModal.setAttribute('tabindex', '-1');
+    exitModal.setAttribute('role', 'dialog');
+    exitModal.setAttribute('aria-modal', 'true');
+
+    exitCancelBtn?.addEventListener('click', (ev) => {
+      ev.preventDefault();
+      if (exitModalBusy) return;
+      closeExitModal();
+    });
+
+    exitConfirmBtn?.addEventListener('click', (ev) => {
+      ev.preventDefault();
+      if (exitModalBusy) return;
+      performExit();
+    });
+
+    exitModal.addEventListener('click', (ev) => {
+      if (ev.target === exitModal && !exitModalBusy) closeExitModal();
+    });
+  }
+
   function bindWindowControls() {
     const container = document.getElementById('window-controls');
     if (!container) return;
@@ -883,8 +973,10 @@
 
     minBtn?.addEventListener('click', () => callApi('minimize'));
     maxBtn?.addEventListener('click', () => callApi('toggle_maximize'));
-    closeBtn?.addEventListener('click', () => {
-      if (!confirm('Close the app?')) return; callApi('close');
+    closeBtn?.addEventListener('click', (ev) => {
+      ev.preventDefault();
+      if (closeBtn && !closeBtn.dataset.busyLabel) closeBtn.dataset.busyLabel = '<i class="fas fa-spinner fa-spin"></i>';
+      exitApp(closeBtn);
     });
   }
 

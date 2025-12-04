@@ -874,7 +874,7 @@ def _start_scan(multi: bool, start_x: float | None = None, end_x: float | None =
     _launch_recorder(multi, x0, x1, pos_str)
 
     # Let recorder spin up, then execute the motion
-    delay_s = int(getattr(Config, "DELAY_BEFORE_RECORD_S", 9))
+    delay_s = int(getattr(Config, "DELAY_BEFORE_RECORD_S", 5))
     time.sleep(delay_s)
     try:
         pssc.ScanPath(x0, x1)

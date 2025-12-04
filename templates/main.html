@@ -200,11 +200,6 @@
 
 <footer>
   <div><p>Support: fatemeh.makouei@3sonic.com | +45 50243760</p></div>
-  <div>
-    <button class="button exit-button" data-action="exit">
-      <i class="fas fa-sign-out-alt"></i> Exit
-    </button>
-  </div>
 </footer>
 
 <!-- Minimal modal used by app.js while scan starts -->
@@ -212,6 +207,17 @@
   <div class="modal-content">
     <h3 style="margin-top:0;">Preparing scan…</h3>
     <p>Please wait while the scanner moves into position.</p>
+  </div>
+</div>
+
+<div id="exitConfirm" class="modal" style="display:none;">
+  <div class="modal-content">
+    <h3 style="margin-top:0;">Close the application?</h3>
+    <p style="margin-bottom:1.2rem;">Stopping now will disconnect the scanner.</p>
+    <div class="modal-actions">
+      <button class="button" id="exitCancelBtn">Cancel</button>
+      <button class="button btn-primary" id="exitConfirmBtn">Exit App</button>
+    </div>
   </div>
 </div>
 
