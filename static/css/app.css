@@ -409,19 +409,6 @@ footer p {
   background: var(--accent-dark);
 }
 
-/* Exit button */
-.exit-button {
-  width: auto;
-  padding: 0.48rem 0.9rem;
-  background: var(--slate-dark);
-}
-
-.exit-button:hover {
-  background: #c44545;
-  border-color: #c44545;
-  box-shadow: 0 0 0 2px rgba(196, 69, 69, 0.3);
-}
-
 /* Header toggle (Ultrasound / Camera) */
 .icon-button {
   display: inline-flex;
@@ -659,6 +646,18 @@ select:focus {
   width: 92%;
   text-align: center;
   box-shadow: var(--shadow);
+}
+
+.modal-actions {
+  display: flex;
+  gap: 0.75rem;
+  justify-content: flex-end;
+  margin-top: 1.5rem;
+}
+
+.modal-actions .button {
+  width: auto;
+  min-width: 110px;
 }
 
 /* ---- Stream Status Overlay ---- */
