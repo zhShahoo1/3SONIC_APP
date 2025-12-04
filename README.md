@@ -359,7 +359,8 @@ defaults under the project root (e.g., sample `scanplan.json` or docs).
 
 ---
 
-## License
+## 
+
 
 If this project is **proprietary**, keep this section as-is and restrict distribution.
 If you intend to open-source it, add an OSI license (e.g. MIT/Apache-2.0) and include the matching `LICENSE` file.

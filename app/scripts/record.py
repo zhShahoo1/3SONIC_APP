@@ -167,8 +167,22 @@ def main(argv: list[str]) -> int:
     print(f"[record] Using e_r_eff={e_r_eff:.6f} mm/frame → Sampling (frames): {n_samples}")
 
     # ── DLL load & init ───────────────────────────────────────────────────────
-    dll_path = str(Config.dll_path())
-    usgfw2 = cdll.LoadLibrary(dll_path)
+    dll_path = Config.dll_path()
+    if not dll_path.exists():
+        # Fallback to bundled src/ directory under BASE_DIR for safety.
+        candidate = (Config.BASE_DIR / Path(Config.US_DLL_NAME)).resolve()
+        if candidate.exists():
+            dll_path = candidate
+        else:
+            raise FileNotFoundError(
+                f"Ultrasound DLL not found. Expected at {dll_path} or {candidate}."
+            )
+
+    print(f"[record] Loading ultrasound DLL from {dll_path}")
+    try:
+        usgfw2 = cdll.LoadLibrary(str(dll_path))
+    except OSError as exc:
+        raise RuntimeError(f"Failed to load ultrasound DLL at {dll_path}") from exc
     usgfw2.on_init()
     ERR = usgfw2.init_ultrasound_usgfw2()
     if ERR == 2:
