@@ -225,6 +225,8 @@ class Config:
     # ---------------- DLL / Ultrasound SDK ----------------
     # Resources moved into the `src/` folder for packaging and clarity.
     US_DLL_NAME: str = os.environ.get("US_DLL_NAME", "src/usgfw2wrapper.dll")
+    US_CONTROL_DLL_NAME: str = os.environ.get("US_CONTROL_DLL", "static/dll/usgfw2wrapperOp.dll")
+    US_REALTIME_DLL_NAME: str = os.environ.get("US_REALTIME_DLL", "static/dll/usgfw2MATLAB_wrapper.dll")
     DICOM_TEMPLATE_NAME: str = os.environ.get("DICOM_TEMPLATE_NAME", "src/dcmimage.dcm")
 
     # ---------------- DICOM defaults ----------------
@@ -319,6 +321,22 @@ class Config:
     def dll_path() -> Path:
         """Resolve path to the ultrasound DLL (bundled or source)."""
         return resource_path(Config.US_DLL_NAME)
+
+    @staticmethod
+    def control_dll_path() -> Path:
+        """Resolve the DLL used for advanced imaging controls."""
+        path = resource_path(Config.US_CONTROL_DLL_NAME)
+        if path.exists():
+            return path
+        return resource_path(Config.US_DLL_NAME)
+
+    @staticmethod
+    def realtime_dll_path() -> Path:
+        """Resolve the preferred realtime imaging DLL, falling back to control DLL."""
+        primary = resource_path(Config.US_REALTIME_DLL_NAME)
+        if primary.exists():
+            return primary
+        return Config.control_dll_path()
 
     @staticmethod
     def dicom_template_path() -> Path:

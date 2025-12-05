@@ -1,6 +1,189 @@
 (function () {
   "use strict";
 
+  const JSON_HEADERS = { "Content-Type": "application/json" };
+
+  async function getJson(url) {
+    const resp = await fetch(url);
+    if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+    return resp.json();
+  }
+
+  async function postJson(url, payload) {
+    const resp = await fetch(url, {
+      method: "POST",
+      headers: JSON_HEADERS,
+      body: JSON.stringify(payload ?? {}),
+    });
+    if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+    return resp.json();
+  }
+
+  let backendState = null;
+  let backendReady = false;
+
+  function setControlValue(key, text) {
+    document.querySelectorAll(`[data-control="${CSS.escape(key)}"] [data-value]`).forEach((el) => {
+      el.textContent = text;
+    });
+  }
+
+  function setSliderValue(key, value) {
+    const wrapper = document.querySelector(`[data-slider="${CSS.escape(key)}"]`);
+    if (!wrapper) return;
+    const input = wrapper.querySelector("input[type=range]");
+    const valueEl = wrapper.querySelector("[data-slider-value]");
+    if (sliderConfig[key]) sliderConfig[key].value = Number(value);
+    if (input) {
+      input.value = value;
+      updateSliderVisual(input);
+    }
+    if (valueEl) valueEl.textContent = value;
+  }
+
+  function togglePanelAvailability(enabled) {
+    const panel = document.querySelector("[data-imaging-panel]");
+    if (!panel) return;
+    panel.classList.toggle("imaging-disabled", !enabled);
+    panel.querySelectorAll("button, input").forEach((el) => {
+      const locked = el.dataset && el.dataset.locked === "true";
+      const optional = Boolean(el.closest("[data-optional]"));
+      if (locked) {
+        el.disabled = true;
+      } else {
+        el.disabled = !enabled && !optional;
+      }
+    });
+  }
+
+  function applyBackendState(state) {
+    backendState = state;
+    backendReady = Boolean(state?.initialized && state?.probe_connected);
+    togglePanelAvailability(backendReady);
+
+    if (!state) return;
+
+    if (state.frequency_label != null) {
+      const label = String(state.frequency_label).includes("MHz") ? state.frequency_label : `${state.frequency_label} MHz`;
+      setControlValue("frequency", label);
+    }
+    if (state.depth_mm != null) setControlValue("depth", `${state.depth_mm} mm`);
+    if (state.dynamic_range_db != null) setControlValue("dynamicRange", `${state.dynamic_range_db} dB`);
+    if (state.focal_depth_mm != null) setControlValue("focus", `${state.focal_depth_mm} mm`);
+    if (state.focal_zones_count != null) setControlValue("focusesNumber", String(state.focal_zones_count));
+    if (state.focal_zone_idx != null) setControlValue("focusSet", String(Number(state.focal_zone_idx) + 1));
+    if (state.steering_angle_deg != null) setControlValue("angle", `${state.steering_angle_deg} °`);
+
+    if (typeof state.gain_percent === "number") setSliderValue("gain", state.gain_percent);
+    if (typeof state.power_db === "number") setSliderValue("power", state.power_db);
+    if (Array.isArray(state.tgc_profile)) {
+      state.tgc_profile.forEach((percent, idx) => setSliderValue(`tgc${idx}`, percent));
+    }
+
+    const scanToggle = document.querySelector('[data-toggle="scanDirection"]');
+    if (scanToggle) scanToggle.checked = Boolean(state.scan_direction_inverted);
+  }
+
+  async function refreshBackendState() {
+    try {
+      const data = await getJson("/api/state");
+      applyBackendState(data);
+    } catch (err) {
+      console.error("[imaging] state refresh failed", err);
+      applyBackendState(null);
+    }
+  }
+
+  const directionEndpoints = {
+    focus: {
+      endpoint: "/api/focus",
+      apply: (res) => {
+        if (typeof res?.value === "number") setControlValue("focus", `${res.value} mm`);
+      },
+    },
+    focusSet: {
+      endpoint: "/api/focus_zone",
+      apply: (res) => {
+        if (typeof res?.zone_idx === "number") setControlValue("focusSet", String(res.zone_idx + 1));
+        if (typeof res?.zones_count === "number") setControlValue("focusesNumber", String(res.zones_count));
+        if (typeof res?.focal_depth_mm === "number") setControlValue("focus", `${res.focal_depth_mm} mm`);
+      },
+    },
+    depth: {
+      endpoint: "/api/depth",
+      apply: (res) => {
+        if (typeof res?.value === "number") setControlValue("depth", `${res.value} mm`);
+      },
+    },
+    dynamicRange: {
+      endpoint: "/api/dynamic_range",
+      apply: (res) => {
+        if (typeof res?.value === "number") setControlValue("dynamicRange", `${res.value} dB`);
+      },
+    },
+    frequency: {
+      endpoint: "/api/frequency",
+      apply: (res) => {
+        if (res?.label) {
+          const txt = String(res.label).includes("MHz") ? res.label : `${res.label} MHz`;
+          setControlValue("frequency", txt);
+        }
+      },
+    },
+    angle: {
+      endpoint: "/api/steering",
+      apply: (res) => {
+        if (typeof res?.value === "number") setControlValue("angle", `${res.value} °`);
+      },
+    },
+  };
+
+  const directionKeys = new Set(Object.keys(directionEndpoints));
+  const readonlyControls = new Set(["focusesNumber"]);
+
+  async function handleSliderAction(key, value) {
+    let endpoint = null;
+    let payload = null;
+
+    if (key === "power") {
+      endpoint = "/api/power";
+      payload = { value: Number(value) };
+    } else if (key === "gain") {
+      endpoint = "/api/gain";
+      payload = { value: Number(value) };
+    } else if (key.startsWith("tgc")) {
+      const idx = Number(key.replace("tgc", ""));
+      if (Number.isInteger(idx)) {
+        endpoint = `/api/tgc/${idx}`;
+        payload = { percent: Number(value) };
+      }
+    }
+
+    if (!endpoint) return;
+
+    try {
+      await postJson(endpoint, payload);
+      void refreshBackendState();
+    } catch (err) {
+      console.error(`[imaging] slider ${key} update failed`, err);
+    }
+  }
+
+  async function handleDirectionAction(key, direction) {
+    const cfg = directionEndpoints[key];
+    if (!cfg) {
+      stepOption(key, direction);
+      return;
+    }
+    try {
+      const res = await postJson(cfg.endpoint, { direction });
+      if (typeof cfg.apply === "function") cfg.apply(res);
+      if (cfg.refresh !== false) void refreshBackendState();
+    } catch (err) {
+      console.error(`[imaging] ${key} update failed`, err);
+    }
+  }
+
   const optionMap = {
     focus: ["0 - 11 mm", "3 - 14 mm", "7 - 20 mm", "11 - 32 mm", "14 - 36 mm"],
     focusesNumber: ["1", "2", "3", "4", "5", "6", "7"],
@@ -68,6 +251,9 @@
     setupRotation(panel);
     setupRecording(panel);
     setupMeasurements(panel);
+
+    void refreshBackendState();
+    window.setInterval(refreshBackendState, 5000);
   }
 
   function setupTabs(panel) {
@@ -148,17 +334,27 @@
       const next = control.querySelector('[data-dir="next"]');
       const toggle = control.querySelector(".imaging-dropdown-toggle");
 
-      if (prev) {
-        prev.addEventListener("click", () => {
-          stepOption(key, -1);
-        });
-      }
-      if (next) {
-        next.addEventListener("click", () => {
-          stepOption(key, 1);
-        });
+      if (readonlyControls.has(key)) {
+        if (prev) {
+          prev.disabled = true;
+          prev.dataset.locked = "true";
+        }
+        if (next) {
+          next.disabled = true;
+          next.dataset.locked = "true";
+        }
+      } else if (directionKeys.has(key)) {
+        if (prev) prev.addEventListener("click", () => { void handleDirectionAction(key, -1); });
+        if (next) next.addEventListener("click", () => { void handleDirectionAction(key, 1); });
+      } else {
+        if (prev) prev.addEventListener("click", () => { stepOption(key, -1); });
+        if (next) next.addEventListener("click", () => { stepOption(key, 1); });
       }
       if (toggle) {
+          if (directionKeys.has(key)) {
+            toggle.disabled = true;
+          toggle.dataset.locked = "true";
+          }
         toggle.addEventListener("click", (event) => {
           event.stopPropagation();
           toggleDropdown(key, control, toggle);
@@ -238,6 +434,17 @@
     }
   }
 
+  function updateSliderVisual(input) {
+    if (!input) return;
+    const min = Number(input.min ?? 0);
+    const max = Number(input.max ?? 100);
+    const range = max - min;
+    const value = Number(input.value ?? min);
+    const safeRange = range === 0 ? 1 : range;
+    const percent = Math.min(100, Math.max(0, ((value - min) / safeRange) * 100));
+    input.style.setProperty("--ratio", `${percent}%`);
+  }
+
   function setupSliders(panel) {
     panel.querySelectorAll("[data-slider]").forEach((wrapper) => {
       const key = wrapper.dataset.slider;
@@ -249,10 +456,19 @@
 
       input.value = sliderConfig[key].value;
       valueEl.textContent = sliderConfig[key].value;
+      updateSliderVisual(input);
 
       input.addEventListener("input", () => {
         sliderConfig[key].value = Number(input.value);
         valueEl.textContent = sliderConfig[key].value;
+        updateSliderVisual(input);
+      });
+
+      input.addEventListener("change", () => {
+        sliderConfig[key].value = Number(input.value);
+        valueEl.textContent = sliderConfig[key].value;
+        updateSliderVisual(input);
+        void handleSliderAction(key, input.value);
       });
     });
   }
@@ -265,6 +481,11 @@
       toggle.addEventListener("change", () => {
         toggles[name] = toggle.checked;
         syncDependents(name, toggle.checked);
+        if (name === "scanDirection") {
+          void postJson("/api/scan_direction", { inverted: toggle.checked })
+            .then(refreshBackendState)
+            .catch((err) => { console.error("[imaging] scan direction update failed", err); });
+        }
       });
       syncDependents(name, toggle.checked);
     });

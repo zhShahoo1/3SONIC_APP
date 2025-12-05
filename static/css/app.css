@@ -178,6 +178,17 @@ footer p {
   -webkit-backdrop-filter: blur(12px);
 }
 
+.rendering-controls {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+}
+
+.rendering-controls > .imaging-panel {
+  flex: 1;
+  min-height: 0;
+}
+
 .card-header {
   padding: 1rem 1.25rem;
   border-bottom: 1px solid var(--border);
@@ -537,10 +548,13 @@ body.motion-active .button[disabled] {
   margin-bottom: 1.5rem;
 }
 
-.automatic-controls,
-.manual-adjustments,
-.rendering-controls {
+.scanner-controls .automatic-controls,
+.scanner-controls .manual-adjustments {
   margin-top: 1.5rem;
+}
+
+.rendering-controls {
+  margin-top: 0;
 }
 
 /* Add breathing room between buttons inside rendering controls */

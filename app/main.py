@@ -12,6 +12,7 @@ import threading
 import subprocess as sp
 from pathlib import Path
 from typing import Tuple, Iterable, Optional
+from dataclasses import asdict
 
 from flask import Flask, Response, jsonify, render_template, request, send_from_directory
 
@@ -45,6 +46,7 @@ if __package__ is None or __package__ == "":
         close_serial,
     )
     import app.core.serial_manager as serial_manager
+    from app.core.usg_ultrasound import get_usg_instance, UltrasoundError
     try:
         from app.core.keyboard_control import start_keyboard_listener, enable_keyboard
     except Exception:
@@ -64,6 +66,7 @@ else:
         close_serial,
     )
     from .core import serial_manager
+    from .core.usg_ultrasound import get_usg_instance, UltrasoundError
     try:
         from .core.keyboard_control import start_keyboard_listener, enable_keyboard
     except Exception:
@@ -133,6 +136,21 @@ def _ultrasound_mjpeg_stream() -> Iterable[bytes]:
         except Exception as e:
             print(f"[ultrasound stream] error (will retry): {e}")
             time.sleep(0.5)  # backoff before retry
+
+
+def _request_json() -> dict:
+    data = request.get_json(silent=True)
+    if isinstance(data, dict):
+        return data
+    return {}
+
+
+def _ensure_usg_instance():
+    usg = get_usg_instance()
+    if usg is None:
+        raise UltrasoundError("Ultrasound library not initialized.")
+    usg.ensure_ready()
+    return usg
 
 # ------------------------------------------------------------------------------
 # Flag helpers
@@ -281,6 +299,216 @@ def video_feed():
 def handle_open_itksnap():
     success, message = open_itksnap_with_dicom_series()
     return jsonify(success=success, message=message)
+
+
+# ------------------------------------------------------------------------------
+# Ultrasound imaging control APIs (advanced tuning)
+# ------------------------------------------------------------------------------
+
+
+@app.route("/api/state")
+def api_imaging_state():
+    usg = get_usg_instance()
+    if usg is None:
+        return jsonify(
+            {
+                "initialized": False,
+                "probe_connected": False,
+                "running": False,
+                "init_error": "DLL could not be loaded or initialization failed.",
+            }
+        )
+
+    state = asdict(usg.get_state())
+    state["focus_zones"] = usg.get_focus_zones()
+    try:
+        state["tgc_profile"] = usg.get_tgc_profile()
+    except Exception:
+        state["tgc_profile"] = []
+    return jsonify(state)
+
+
+@app.route("/api/run", methods=["POST"])
+def api_imaging_run():
+    try:
+        usg = _ensure_usg_instance()
+        usg.run()
+        return jsonify({"ok": True})
+    except UltrasoundError as exc:
+        return jsonify({"ok": False, "error": str(exc)}), 503
+
+
+@app.route("/api/freeze", methods=["POST"])
+def api_imaging_freeze():
+    try:
+        usg = _ensure_usg_instance()
+        usg.freeze()
+        return jsonify({"ok": True})
+    except UltrasoundError as exc:
+        return jsonify({"ok": False, "error": str(exc)}), 503
+
+
+@app.route("/api/frequency", methods=["POST"])
+def api_imaging_frequency():
+    body = _request_json()
+    direction = int(body.get("direction", 0))
+    try:
+        usg = _ensure_usg_instance()
+        label = usg.adjust_frequency(direction)
+        return jsonify({"label": label})
+    except UltrasoundError as exc:
+        return jsonify({"error": str(exc)}), 503
+
+
+@app.route("/api/depth", methods=["POST"])
+def api_imaging_depth():
+    body = _request_json()
+    direction = int(body.get("direction", 0))
+    try:
+        usg = _ensure_usg_instance()
+        value = usg.adjust_depth(direction)
+        return jsonify({"value": value})
+    except UltrasoundError as exc:
+        return jsonify({"error": str(exc)}), 503
+
+
+@app.route("/api/gain", methods=["POST"])
+def api_imaging_gain():
+    body = _request_json()
+    value = int(body.get("value", 70))
+    try:
+        usg = _ensure_usg_instance()
+        new_value = usg.set_gain(value)
+        return jsonify({"value": new_value})
+    except UltrasoundError as exc:
+        return jsonify({"error": str(exc)}), 503
+
+
+@app.route("/api/power", methods=["POST"])
+def api_imaging_power():
+    body = _request_json()
+    value = int(body.get("value", 20))
+    try:
+        usg = _ensure_usg_instance()
+        new_value = usg.set_power(value)
+        return jsonify({"value": new_value})
+    except UltrasoundError as exc:
+        return jsonify({"error": str(exc)}), 503
+
+
+@app.route("/api/focus", methods=["POST"])
+def api_imaging_focus():
+    body = _request_json()
+    direction = int(body.get("direction", 0))
+    try:
+        usg = _ensure_usg_instance()
+        value = usg.adjust_focal_depth(direction)
+        return jsonify({"value": value})
+    except UltrasoundError as exc:
+        return jsonify({"error": str(exc)}), 503
+
+
+@app.route("/api/focus_zone", methods=["POST"])
+def api_imaging_focus_zone():
+    body = _request_json()
+    direction = int(body.get("direction", 0))
+    try:
+        usg = _ensure_usg_instance()
+        result = usg.adjust_focal_zone_index(direction)
+        return jsonify(result)
+    except UltrasoundError as exc:
+        return jsonify({"error": str(exc)}), 503
+
+
+@app.route("/api/focus_zones", methods=["GET"])
+def api_imaging_focus_zones_get():
+    try:
+        usg = get_usg_instance()
+        if usg is None:
+            return jsonify({"zones": []})
+        return jsonify({"zones": usg.get_focus_zones()})
+    except Exception as exc:
+        return jsonify({"error": str(exc)}), 500
+
+
+@app.route("/api/focus_zones", methods=["POST"])
+def api_imaging_focus_zones_set():
+    body = _request_json()
+    idx = int(body.get("index", 0))
+    depth_mm = int(body.get("depth_mm", 0))
+    apply = bool(body.get("apply", True))
+    try:
+        usg = _ensure_usg_instance()
+        if apply:
+            result = usg.set_focus_zone_depth(idx, depth_mm, apply=True)
+            return jsonify(result)
+        usg.set_focus_zone_local(idx, depth_mm)
+        return jsonify({"ok": True})
+    except UltrasoundError as exc:
+        return jsonify({"error": str(exc)}), 503
+
+
+@app.route("/api/focus_zones/apply_all", methods=["POST"])
+def api_imaging_focus_zones_apply_all():
+    try:
+        usg = _ensure_usg_instance()
+        zones = usg.get_focus_zones()
+        results = []
+        for zone in zones:
+            idx = int(zone.get("index", 0))
+            depth = int(zone.get("depth_mm", 0))
+            results.append(usg.set_focus_zone_depth(idx, depth, apply=True))
+        return jsonify({"results": results})
+    except UltrasoundError as exc:
+        return jsonify({"error": str(exc)}), 503
+
+
+@app.route("/api/steering", methods=["POST"])
+def api_imaging_steering():
+    body = _request_json()
+    direction = int(body.get("direction", 0))
+    try:
+        usg = _ensure_usg_instance()
+        value = usg.adjust_steering_angle(direction)
+        return jsonify({"value": value})
+    except UltrasoundError as exc:
+        return jsonify({"error": str(exc)}), 503
+
+
+@app.route("/api/dynamic_range", methods=["POST"])
+def api_imaging_dynamic_range():
+    body = _request_json()
+    direction = int(body.get("direction", 0))
+    try:
+        usg = _ensure_usg_instance()
+        value = usg.adjust_dynamic_range(direction)
+        return jsonify({"value": value})
+    except UltrasoundError as exc:
+        return jsonify({"error": str(exc)}), 503
+
+
+@app.route("/api/scan_direction", methods=["POST"])
+def api_imaging_scan_direction():
+    body = _request_json()
+    inverted = bool(body.get("inverted", False))
+    try:
+        usg = _ensure_usg_instance()
+        value = usg.set_scan_direction_inverted(inverted)
+        return jsonify({"inverted": value})
+    except UltrasoundError as exc:
+        return jsonify({"error": str(exc)}), 503
+
+
+@app.route("/api/tgc/<int:idx>", methods=["POST"])
+def api_imaging_tgc(idx: int):
+    body = _request_json()
+    percent = int(body.get("percent", 50))
+    try:
+        usg = _ensure_usg_instance()
+        result = usg.set_tgc(idx, percent)
+        return jsonify(result)
+    except UltrasoundError as exc:
+        return jsonify({"error": str(exc)}), 503
 
 # ------------------------------------------------------------------------------
 # Keyboard-friendly jog handling
