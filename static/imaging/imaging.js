@@ -61,6 +61,14 @@
     backendReady = Boolean(state?.initialized && state?.probe_connected);
     togglePanelAvailability(backendReady);
 
+    const summary = {
+      initialized: Boolean(state?.initialized),
+      probeConnected: Boolean(state?.probe_connected),
+      running: Boolean(state?.running),
+      initError: state?.init_error ?? null,
+    };
+    window.dispatchEvent(new CustomEvent("ultrasound-state", { detail: summary }));
+
     if (!state) return;
 
     if (state.frequency_label != null) {
@@ -238,6 +246,7 @@
   };
 
   document.addEventListener("DOMContentLoaded", init);
+  window.addEventListener("imaging-refresh-request", () => { void refreshBackendState(); });
 
   function init() {
     const panel = document.querySelector("[data-imaging-panel]");

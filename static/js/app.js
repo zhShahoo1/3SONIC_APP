@@ -46,9 +46,38 @@
     // stepSelect removed: UI no longer exposes distance dropdown
     ultrasoundImg: "#im1",
     webcamImg: "#im2",
+    ultrasoundWrap: '[data-stream="ultrasound"]',
+    cameraWrap: '[data-stream="camera"]',
     buttons: "[data-action]",
     lowerPlateBtn: "#lower-plate-btn",
   };
+
+  const overlaySignals = {
+    backend: {
+      initialized: false,
+      probeConnected: false,
+      running: false,
+      initError: null,
+    },
+    stream: {
+      reconnecting: false,
+      title: "",
+      subtitle: "",
+    },
+  };
+
+  const cameraOverlayState = {
+    mode: "offline",
+  };
+
+  const CAMERA_OVERLAY_COPY = {
+    offline: { indicator: "OFFLINE", state: "Offline" },
+    connecting: { indicator: "CONNECT", state: "Connecting" },
+    live: { indicator: "LIVE", state: "Live" },
+  };
+
+  let freezeToggleBtn = null;
+  let freezeBusy = false;
 
   // ------------------------------ Helpers ----------------------------------
   const $  = (sel, root = document) => root.querySelector(sel);
@@ -487,6 +516,139 @@
   }
 
   // --------------------------- UI Bindings ----------------------------------
+  function setStreamReconnectStatus(active, title, subtitle) {
+    overlaySignals.stream.reconnecting = !!active;
+    overlaySignals.stream.title = active
+      ? (title || "Reconnecting to ultrasound…")
+      : "";
+    overlaySignals.stream.subtitle = active
+      ? (subtitle || "Re-establishing the live stream.")
+      : "";
+    refreshStreamOverlay();
+  }
+
+  function refreshStreamOverlay() {
+    const overlay = ensureUsOverlay();
+    if (!overlay) return;
+    const card = overlay.querySelector(".status-card");
+    if (!card) return;
+
+    const { backend, stream } = overlaySignals;
+
+    let visible = false;
+    let mode = "live";
+    let title = "";
+    let subtitle = "";
+    let showRestart = false;
+
+    if (stream.reconnecting) {
+      visible = true;
+      mode = "offline";
+      title = stream.title || "Reconnecting to ultrasound…";
+      subtitle = stream.subtitle || "Re-establishing the live stream.";
+      showRestart = true;
+    } else if (!backend.initialized || !backend.probeConnected) {
+      visible = true;
+      mode = "offline";
+      title = backend.initError ? "Ultrasound initialization failed" : "No probe detected";
+      subtitle = backend.initError || "Connect the ultrasound probe to resume.";
+      showRestart = true;
+    } else if (!backend.running) {
+      visible = true;
+      mode = "paused";
+      title = "Ultrasound feed paused";
+      subtitle = "Press Resume to continue live imaging.";
+    }
+
+    if (!visible && !overlaySignals.stream.reconnecting) {
+      overlay.classList.add("hidden");
+    } else {
+      overlay.classList.toggle("hidden", !visible);
+    }
+
+    card.dataset.mode = mode;
+
+    const badge = card.querySelector(".badge");
+    const badgeLabel = card.querySelector(".badge-label");
+    const dialCore = card.querySelector(".dial-core");
+    if (badge) {
+      badge.classList.remove("live", "paused", "offline");
+      badge.classList.add(mode);
+    }
+    if (badgeLabel) {
+      badgeLabel.textContent = mode === "offline" ? "Offline" : mode === "paused" ? "Paused" : "Live";
+    }
+    if (dialCore) {
+      dialCore.textContent = mode === "offline" ? "USB" : mode === "paused" ? "Hold" : "Live";
+    }
+
+    const titleEl = card.querySelector(".title");
+    const subtitleEl = card.querySelector(".subtitle");
+    if (titleEl && title) titleEl.textContent = title;
+    if (subtitleEl && subtitle) subtitleEl.textContent = subtitle;
+
+    const actions = card.querySelector(".actions");
+    if (actions) actions.style.display = showRestart ? "inline-flex" : "none";
+  }
+
+  function updateBackendSignals(detail = {}) {
+    overlaySignals.backend.initialized = !!detail.initialized;
+    overlaySignals.backend.probeConnected = !!detail.probeConnected;
+    overlaySignals.backend.running = !!detail.running;
+    overlaySignals.backend.initError = detail.initError || null;
+    refreshFreezeButton();
+    refreshStreamOverlay();
+  }
+
+  function refreshFreezeButton() {
+    if (!freezeToggleBtn) return;
+    const { initialized, probeConnected, running } = overlaySignals.backend;
+    const disabled = freezeBusy || !initialized || !probeConnected;
+    freezeToggleBtn.disabled = disabled;
+    freezeToggleBtn.setAttribute("aria-pressed", String(!running));
+    freezeToggleBtn.dataset.state = running ? "live" : "frozen";
+    if (freezeBusy) freezeToggleBtn.dataset.busy = "true";
+    else delete freezeToggleBtn.dataset.busy;
+    const textEl = freezeToggleBtn.querySelector(".freeze-text");
+    if (textEl) textEl.textContent = running ? "Freeze" : "Resume";
+    freezeToggleBtn.title = running ? "Freeze ultrasound feed" : "Resume ultrasound feed";
+  }
+
+  async function handleFreezeToggle(ev) {
+    ev.preventDefault();
+    if (!freezeToggleBtn || freezeBusy) return;
+    const { initialized, probeConnected, running } = overlaySignals.backend;
+    if (!initialized || !probeConnected) return;
+
+    freezeBusy = true;
+    refreshFreezeButton();
+    const nextAction = running ? "freeze" : "resume";
+    try {
+      if (running) {
+        await apiPostJSON("/api/freeze", {});
+      } else {
+        await apiPostJSON("/api/run", {});
+      }
+      overlaySignals.backend.running = !running;
+      refreshFreezeButton();
+      refreshStreamOverlay();
+    } catch (err) {
+      console.error("[freeze] toggle failed", err);
+      window.alert(`Unable to ${nextAction} ultrasound: ${err?.message || err}`);
+    } finally {
+      freezeBusy = false;
+      refreshFreezeButton();
+      window.dispatchEvent(new Event("imaging-refresh-request"));
+    }
+  }
+
+  function bindFreezeToggle() {
+    freezeToggleBtn = document.querySelector('[data-action="freeze-toggle"]');
+    if (!freezeToggleBtn) return;
+    freezeToggleBtn.addEventListener("click", handleFreezeToggle);
+    refreshFreezeButton();
+  }
+
   function bindButtons() {
     // Track recent hold timestamps to suppress click after a hold
     const _holdTs = {};
@@ -628,19 +790,37 @@
   function showUltrasound() {
     const us = $(SELECTORS.ultrasoundImg);
     const cam = $(SELECTORS.webcamImg);
+    const usWrap = $(SELECTORS.ultrasoundWrap);
+    const camWrap = $(SELECTORS.cameraWrap);
     if (!us || !cam) return;
+    if (usWrap) usWrap.style.display = "";
     us.style.display = "";
+    if (camWrap) camWrap.style.display = "none";
     cam.style.display = "none";
     setActiveToggle("ultrasound");
+    setCameraOverlayMode(cameraOverlayState.mode);
   }
 
   function showWebcam() {
     const us = $(SELECTORS.ultrasoundImg);
     const cam = $(SELECTORS.webcamImg);
+    const usWrap = $(SELECTORS.ultrasoundWrap);
+    const camWrap = $(SELECTORS.cameraWrap);
     if (!us || !cam) return;
-    cam.style.display = "";
+    if (usWrap) usWrap.style.display = "none";
     us.style.display = "none";
+    if (camWrap) camWrap.style.display = "";
+    cam.style.display = "";
     setActiveToggle("camera");
+
+    let nextMode = "connecting";
+    if (cam.naturalWidth > 0) {
+      nextMode = "live";
+    } else if (cameraOverlayState.mode === "offline") {
+      nextMode = "offline";
+    }
+    cameraOverlayState.mode = nextMode;
+    setCameraOverlayMode(nextMode);
   }
 
   // ---- Ultrasound status overlay (non-intrusive)
@@ -656,14 +836,103 @@
       overlay = document.createElement("div");
       overlay.className = "status-overlay hidden";
       overlay.innerHTML = `
-        <div class="status-card">
-          <div class="spinner"></div>
+        <div class="status-card" data-mode="offline">
+          <div class="badge offline">
+            <span class="badge-dot" aria-hidden="true"></span>
+            <span class="badge-label">Offline</span>
+          </div>
+          <div class="dial"><div class="dial-core">USB</div></div>
           <div class="title">Reconnecting to ultrasound…</div>
           <div class="subtitle">If the probe was unplugged, please plug it back in.</div>
+          <div class="actions">
+            <button type="button" data-overlay-action="restart">Restart Driver</button>
+          </div>
         </div>`;
       parent.appendChild(overlay);
+
+      const restartBtn = overlay.querySelector('[data-overlay-action="restart"]');
+      restartBtn?.addEventListener("click", async () => {
+        if (!restartBtn) return;
+        try {
+          setBusy(restartBtn, true);
+          setStreamReconnectStatus(true, "Restarting ultrasound driver…", "Please wait a moment.");
+          await apiPostJSON(ENDPOINTS.usRestart, {});
+          window.dispatchEvent(new Event("imaging-refresh-request"));
+        } catch (err) {
+          console.error("[ultrasound] driver restart failed", err);
+          window.alert(`Ultrasound restart failed: ${err?.message || err}`);
+        } finally {
+          setBusy(restartBtn, false);
+        }
+      });
     }
     return overlay;
+  }
+
+  function ensureCameraOverlay() {
+    const wrap = $(SELECTORS.cameraWrap);
+    if (!wrap) return null;
+    if (!wrap.style.position) wrap.style.position = "relative";
+
+    let overlay = wrap.querySelector(".camera-overlay");
+    if (!overlay) {
+      overlay = document.createElement("div");
+      overlay.className = "camera-overlay hidden";
+      overlay.innerHTML = `
+        <div class="camera-indicator">
+          <span class="camera-indicator-dot" aria-hidden="true"></span>
+          <span class="camera-indicator-text" data-camera-indicator>OFFLINE</span>
+        </div>
+        <div class="camera-card">
+          <div class="camera-ring"><div class="camera-ring-inner"></div></div>
+          <div class="camera-title">Webcam Feed</div>
+          <div class="camera-state" data-camera-state>Offline</div>
+        </div>`;
+      wrap.appendChild(overlay);
+    }
+    return overlay;
+  }
+
+  function setCameraOverlayMode(mode) {
+    const overlay = ensureCameraOverlay();
+    if (!overlay) return;
+    const next = CAMERA_OVERLAY_COPY[mode] ? mode : cameraOverlayState.mode;
+    cameraOverlayState.mode = next;
+    overlay.dataset.mode = next;
+
+    const copy = CAMERA_OVERLAY_COPY[next] || CAMERA_OVERLAY_COPY.offline;
+    const indicator = overlay.querySelector("[data-camera-indicator]");
+    const stateLabel = overlay.querySelector("[data-camera-state]");
+    if (indicator) indicator.textContent = copy.indicator;
+    if (stateLabel) stateLabel.textContent = copy.state;
+
+    const dot = overlay.querySelector(".camera-indicator-dot");
+    if (dot) dot.classList.toggle("is-pulsing", next === "connecting");
+
+    const shouldShow = state.view === "camera" && next !== "live";
+    overlay.classList.toggle("hidden", !shouldShow);
+  }
+
+  function bindCameraOverlay() {
+    const cam = $(SELECTORS.webcamImg);
+    if (!cam) return;
+
+    ensureCameraOverlay();
+
+    const apply = () => setCameraOverlayMode(cameraOverlayState.mode);
+
+    cam.addEventListener("load", () => {
+      cameraOverlayState.mode = "live";
+      apply();
+    });
+
+    cam.addEventListener("error", () => {
+      cameraOverlayState.mode = "offline";
+      apply();
+    });
+
+    cameraOverlayState.mode = (cam.complete && cam.naturalWidth > 0) ? "live" : "offline";
+    apply();
   }
 
   // ----------------------- Connection Badges -------------------------------
@@ -736,23 +1005,17 @@
     const us = $(SELECTORS.ultrasoundImg);
     if (!us) return;
 
-    const overlay = ensureUsOverlay();
-
     let lastReload = 0;
     let errorCount = 0;
     let watchdog = null;
-    const MIN_RELOAD_MS = 1500;
+    const MIN_RELOAD_MS = Number(window.__FRONTEND_US_RELOAD_MIN_MS) || 1500;
     const WATCHDOG_MS = 5000;
+    const PERIODIC_MS = Number(window.__FRONTEND_US_RELOAD_PERIOD_MS) || 60000;
 
     const showStatus = (title, sub) => {
-      if (!overlay) return;
-      overlay.classList.remove("hidden");
-      const t = overlay.querySelector(".title");
-      const s = overlay.querySelector(".subtitle");
-      if (t) t.textContent = title || "Reconnecting to ultrasound…";
-      if (s) s.textContent = sub || "If the probe was unplugged, please plug it back in.";
+      setStreamReconnectStatus(true, title, sub);
     };
-    const hideStatus = () => { overlay?.classList.add("hidden"); };
+    const hideStatus = () => { setStreamReconnectStatus(false); };
 
     const reload = (reason = "reload") => {
       const now = Date.now();
@@ -771,6 +1034,7 @@
           try {
             showStatus("Restarting ultrasound driver…", "Please wait a moment.");
             await apiPostJSON(ENDPOINTS.usRestart, {});
+            window.dispatchEvent(new Event("imaging-refresh-request"));
           } catch (e) {
             console.error("[ultrasound] restart failed:", e.message);
           }
@@ -800,7 +1064,7 @@
       if (document.visibilityState === "visible") reload("tab-visible");
     });
 
-    setInterval(() => reload("periodic"), 60000); // periodic nudge
+    setInterval(() => reload("periodic"), PERIODIC_MS); // periodic nudge
     reload("init"); // initial kick
   }
 
@@ -897,7 +1161,9 @@
     bindButtons();
     bindKeyboard();
     bindInsertBath();
+    bindFreezeToggle();
     bindUltrasoundAutoReload();
+    bindCameraOverlay();
     bindExitModal();
     bindWindowControls();
     bindWindowDragHandle();
@@ -915,6 +1181,10 @@
 
     
   }
+
+  window.addEventListener("ultrasound-state", (ev) => {
+    updateBackendSignals(ev?.detail || {});
+  });
 
   document.addEventListener("DOMContentLoaded", init);
 
@@ -1210,10 +1480,6 @@
     }
     @keyframes spin { to { transform: rotate(360deg); } }
     .danger-step { border: 2px solid #fa5252; background-color: #fff5f5; }
-    .status-overlay{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;background:rgba(0,0,0,.35)}
-    .status-overlay.hidden{display:none}
-    .status-card{background:rgba(43,48,59,.95);border:1px solid rgba(143,188,187,.4);padding:12px 16px;border-radius:10px;display:flex;gap:10px;align-items:center}
-    .status-card .spinner{width:16px;height:16px;border:3px solid rgba(255,255,255,.3);border-top-color:#fff;border-radius:50%;animation:spin 1s linear infinite}
     .modal{position:fixed;inset:0;background:rgba(0,0,0,.55);display:none;align-items:center;justify-content:center;z-index:9999}
   `;
   document.head.appendChild(style);

@@ -214,6 +214,77 @@ footer p {
 .display-controls .icon-button .btn-label { display: none; }
 .display-controls .icon-button img.icon { width: 18px; height: 18px; }
 
+.freeze-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+  padding: 0.42rem 0.8rem;
+  border-radius: 999px;
+  border: 1px solid rgba(0, 141, 153, 0.35);
+  background: rgba(0, 141, 153, 0.1);
+  color: var(--text);
+  font-size: 0.78rem;
+  font-weight: var(--weight-medium);
+  cursor: pointer;
+  transition: var(--transition);
+  position: relative;
+  min-width: 96px;
+  justify-content: center;
+}
+
+.freeze-toggle:hover:not([disabled]) {
+  background: rgba(0, 141, 153, 0.18);
+  border-color: rgba(0, 141, 153, 0.5);
+  box-shadow: 0 6px 18px rgba(0, 141, 153, 0.24);
+}
+
+.freeze-toggle[disabled] {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+.freeze-toggle[data-state="frozen"] {
+  background: rgba(0, 141, 153, 0.08);
+  border-color: rgba(0, 141, 153, 0.32);
+  color: rgba(228, 232, 240, 0.88);
+}
+
+.freeze-toggle .freeze-dot {
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  background: linear-gradient(180deg, #ff8a8a, #ff5656);
+  box-shadow: 0 0 0 0 rgba(255, 90, 90, 0.4);
+  transition: box-shadow 0.3s ease, background 0.3s ease;
+}
+
+.freeze-toggle[data-state="live"] .freeze-dot {
+  animation: pulse-dot 1.35s ease-in-out infinite;
+}
+
+.freeze-toggle[data-state="frozen"] .freeze-dot {
+  background: linear-gradient(180deg, #3ee6c9, #00a8a0);
+  box-shadow: 0 0 0 6px rgba(0, 141, 153, 0.18);
+  animation: none;
+}
+
+.freeze-toggle .freeze-text {
+  font-size: 0.78rem;
+  letter-spacing: 0.2px;
+}
+
+.freeze-toggle[data-busy="true"]::after {
+  content: "";
+  position: absolute;
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  border: 2px solid rgba(255, 255, 255, 0.45);
+  border-top-color: rgba(255, 255, 255, 0.05);
+  right: 9px;
+  animation: spin 0.8s linear infinite;
+}
+
 /* Header status badges (serial / probe) */
 .header-status {
   display: flex;
@@ -567,8 +638,7 @@ body.motion-active .button[disabled] {
   margin-bottom: 0;
 }
 
-.automatic-controls h2,
-.manual-adjustments h2,
+.scanner-controls > h2,
 .rendering-controls h2 {
   font-size: 1rem;
   font-weight: var(--weight-light);
@@ -579,13 +649,32 @@ body.motion-active .button[disabled] {
   gap: 0.6rem;
 }
 
-.automatic-controls h2::before,
-.manual-adjustments h2::before,
+.scanner-controls > h2::before,
 .rendering-controls h2::before {
   content: "";
   width: 4px;
   height: 16px;
   background: var(--accent-turquoise);
+  border-radius: 2px;
+}
+
+.section-label {
+  font-size: 0.82rem;
+  font-weight: var(--weight-medium);
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: rgba(229, 233, 240, 0.68);
+  margin-bottom: 0.85rem;
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+}
+
+.section-label::before {
+  content: "";
+  width: 3px;
+  height: 14px;
+  background: rgba(0, 141, 153, 0.45);
   border-radius: 2px;
 }
 
@@ -690,41 +779,151 @@ select:focus {
   display: none;
 }
 
-  .status-card {
+.status-card {
   min-width: 280px;
   max-width: 460px;
-  padding: 16px 18px;
-  border-radius: 14px;
-  background: var(--bg-card); /* match header background */
+  padding: 18px 20px;
+  border-radius: 18px;
+  background: radial-gradient(circle at 20% 20%, rgba(0, 141, 153, 0.12), rgba(12, 18, 26, 0.92));
   color: #e6e8eb;
   text-align: center;
-  border: 1px solid rgba(0, 141, 153, 0.2);
-  box-shadow: 0 10px 32px rgba(0, 0, 0, 0.6), inset 0 1px 0 rgba(255, 255, 255, 0.04);
+  border: 1px solid rgba(0, 141, 153, 0.25);
+  box-shadow: 0 16px 44px rgba(0, 0, 0, 0.55), inset 0 1px 0 rgba(255, 255, 255, 0.05);
   font-family: var(--font-ui);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.9rem;
+}
+
+.status-card .badge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.45rem;
+  padding: 0.28rem 0.85rem;
+  border-radius: 999px;
+  font-size: 0.7rem;
+  font-weight: var(--weight-medium);
+  letter-spacing: 0.22px;
+  text-transform: uppercase;
+}
+
+.status-card .badge-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: currentColor;
+  box-shadow: 0 0 0 2px currentColor;
+}
+
+.status-card[data-mode="live"] .badge {
+  background: rgba(255, 90, 90, 0.14);
+  color: #ff6b6b;
+  border: 1px solid rgba(255, 90, 90, 0.3);
+}
+
+.status-card[data-mode="live"] .badge-dot {
+  animation: pulse-dot 1.3s ease-in-out infinite;
+}
+
+.status-card[data-mode="paused"] .badge {
+  background: rgba(0, 141, 153, 0.16);
+  color: var(--accent-turquoise);
+  border: 1px solid rgba(0, 141, 153, 0.32);
+}
+
+.status-card[data-mode="offline"] .badge {
+  background: rgba(255, 255, 255, 0.12);
+  color: rgba(229, 233, 240, 0.82);
+  border: 1px solid rgba(255, 255, 255, 0.2);
+}
+
+.status-card .dial {
+  width: 80px;
+  height: 80px;
+  border-radius: 50%;
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: radial-gradient(circle at 30% 30%, rgba(255, 255, 255, 0.16), rgba(255, 255, 255, 0.02));
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.04);
+}
+
+.status-card .dial::before {
+  content: "";
+  position: absolute;
+  inset: 10px;
+  border-radius: 50%;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+.status-card .dial::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  border-radius: 50%;
+  background: radial-gradient(circle at 50% 50%, rgba(0, 141, 153, 0.32), rgba(0, 141, 153, 0.05));
+  opacity: 0.6;
+}
+
+.status-card[data-mode="offline"] .dial::after {
+  background: radial-gradient(circle at 50% 50%, rgba(255, 255, 255, 0.18), rgba(255, 255, 255, 0.04));
+}
+
+.status-card .dial .dial-core {
+  width: 32px;
+  height: 32px;
+  border-radius: 50%;
+  border: 1px solid rgba(255, 255, 255, 0.15);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 0.68rem;
+  letter-spacing: 0.2px;
+  color: rgba(229, 233, 240, 0.86);
 }
 
 .status-card .title {
   font-weight: 700;
-  font-size: 15px;
-  letter-spacing: 0.2px;
-  margin-top: 10px;
+  font-size: 1rem;
+  letter-spacing: 0.24px;
 }
 
 .status-card .subtitle {
-  opacity: 0.85;
-  font-size: 13px;
-  margin-top: 6px;
+  opacity: 0.82;
+  font-size: 0.78rem;
+  line-height: 1.4;
+  max-width: 18rem;
 }
 
-.spinner {
-  width: 26px;
-  height: 26px;
-  border-radius: 50%;
-  border: 3px solid transparent;
-  border-top-color: #20d9d9;
-  border-right-color: #20d9d9;
-  margin: 0 auto 4px;
-  animation: spin 0.9s linear infinite;
+.status-card .actions {
+  display: flex;
+  gap: 0.65rem;
+}
+
+.status-card .actions button {
+  padding: 0.45rem 1.05rem;
+  border-radius: 999px;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  background: rgba(255, 255, 255, 0.06);
+  color: rgba(229, 233, 240, 0.85);
+  font-size: 0.72rem;
+  letter-spacing: 0.18px;
+  cursor: pointer;
+  transition: var(--transition);
+}
+
+.status-card .actions button:hover {
+  border-color: rgba(0, 141, 153, 0.45);
+  color: var(--accent-turquoise);
+}
+
+@keyframes pulse-dot {
+  0%, 100% { box-shadow: 0 0 0 2px currentColor; opacity: 0.65; }
+  50% { box-shadow: 0 0 0 6px rgba(255, 90, 90, 0.24); opacity: 1; }
 }
 
 /* Global loading state */
@@ -737,6 +936,121 @@ select:focus {
 .is-loading::after {
   content: "";
   position: absolute;
+.camera-overlay {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  background:
+    linear-gradient(0deg, rgba(206, 222, 236, 0.25) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(206, 222, 236, 0.25) 1px, transparent 1px),
+    linear-gradient(180deg, rgba(234, 246, 249, 0.95), rgba(255, 255, 255, 0.95));
+  background-size: 100% 68px, 68px 100%, auto;
+  color: #24384d;
+  font-family: var(--font-ui);
+  z-index: 9;
+  pointer-events: none;
+  border-radius: inherit;
+}
+
+.camera-overlay.hidden {
+  display: none;
+}
+
+.camera-overlay .camera-indicator {
+  position: absolute;
+  top: 18px;
+  right: 22px;
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+  font-size: 0.72rem;
+  font-weight: var(--weight-medium);
+  letter-spacing: 0.22em;
+  text-transform: uppercase;
+  color: rgba(235, 84, 96, 0.88);
+}
+
+.camera-overlay .camera-indicator-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: currentColor;
+  box-shadow: 0 0 0 2px rgba(255, 255, 255, 0.65);
+}
+
+.camera-indicator-dot.is-pulsing {
+  animation: camera-indicator-pulse 1.6s ease-in-out infinite;
+}
+
+.camera-overlay[data-mode="connecting"] .camera-indicator {
+  color: rgba(244, 162, 59, 0.9);
+}
+
+.camera-overlay[data-mode="live"] .camera-indicator {
+  color: rgba(45, 183, 142, 0.95);
+}
+
+.camera-overlay .camera-card {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 1.05rem;
+  text-align: center;
+}
+
+.camera-overlay .camera-ring {
+  width: 110px;
+  height: 110px;
+  border-radius: 50%;
+  border: 2px solid rgba(0, 141, 153, 0.18);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.45);
+}
+
+.camera-overlay .camera-ring-inner {
+  width: 86px;
+  height: 86px;
+  border-radius: 50%;
+  border: 1px solid rgba(0, 141, 153, 0.2);
+}
+
+.camera-overlay .camera-title {
+  font-size: 1.05rem;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+  color: rgba(40, 56, 72, 0.72);
+}
+
+.camera-overlay .camera-state {
+  font-size: 0.78rem;
+  letter-spacing: 0.32em;
+  text-transform: uppercase;
+  color: rgba(94, 118, 142, 0.9);
+}
+
+.camera-overlay[data-mode="connecting"] .camera-state {
+  color: rgba(68, 104, 140, 0.94);
+}
+
+.camera-overlay[data-mode="live"] .camera-state {
+  color: rgba(45, 183, 142, 0.95);
+}
+
+@keyframes camera-indicator-pulse {
+  0%, 100% {
+    transform: scale(1);
+    opacity: 0.65;
+  }
+  50% {
+    transform: scale(1.35);
+    opacity: 1;
+  }
+}
   inset: 0;
   background: radial-gradient(circle at 50% 50%, rgba(32, 217, 217, 0.9) 0 20%, transparent 21%),
     conic-gradient(from 0turn, rgba(32, 217, 217, 0) 0 85%, rgba(32, 217, 217, 0.9) 86% 100%);

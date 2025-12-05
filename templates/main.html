@@ -44,6 +44,7 @@
 <main>
   <!-- Left panel -->
   <section class="scanner-controls">
+    <h2>Device Motion Controls</h2>
     <div class="scan-buttons">
       <button
         class="button btn-primary"
@@ -64,15 +65,17 @@
       </button>
     </div>
 
+    <!-- <h2>Device Motion Controls</h2> -->
+
     <div class="automatic-controls">
-      <h2>Automatic Controls</h2>
+      <!-- <div class="section-label">Automatic Controls</div> -->
       <button class="button" data-action="init">
         <i class="fas fa-cog"></i> Initialize Scanner
       </button>
     </div>
 
     <div class="manual-adjustments">
-      <h2>Manual Adjustments</h2>
+      <!-- <div class="section-label">Manual Adjustments</div> -->
       <!-- D-Pad -->
       <div class="dpad">
         <span></span>
@@ -161,13 +164,19 @@
             <img src="{{ url_for('static', filename='images/web-camera.png') }}" alt="Camera" class="icon" />
             <span class="btn-label">Camera</span>
           </button>
+          <button type="button" class="freeze-toggle" data-action="freeze-toggle" aria-pressed="false" disabled>
+            <span class="freeze-dot" aria-hidden="true"></span>
+            <span class="freeze-text">Freeze</span>
+          </button>
         </div>
       </div>
       <div class="card-image">
-        <div class="stream-wrap">
+        <div class="stream-wrap" data-stream="ultrasound">
           <img id="im1" src="{{ url_for('ultrasound_video_feed') }}" alt="Ultrasound" class="dispimg_us" />
         </div>
-        <img id="im2" src="{{ url_for('video_feed') }}" alt="Webcam" class="dispimg_us" style="display:none;" />
+        <div class="stream-wrap" data-stream="camera" style="display:none;">
+          <img id="im2" src="{{ url_for('video_feed') }}" alt="Webcam" class="dispimg_us" />
+        </div>
       </div>
     </div>
   </section>
